@@ -65,25 +65,11 @@ import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.Calendar;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
-import java.util.Random;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
-
-import boofcv.abst.fiducial.FiducialDetector;
-import boofcv.alg.distort.LensDistortionNarrowFOV;
-import boofcv.alg.distort.pinhole.LensDistortionPinhole;
-import boofcv.core.encoding.ConvertNV21;
-import boofcv.factory.fiducial.ConfigFiducialBinary;
-import boofcv.factory.fiducial.FactoryFiducial;
-import boofcv.factory.filter.binary.ConfigThreshold;
-import boofcv.factory.filter.binary.ThresholdType;
-import boofcv.struct.calib.CameraPinhole;
-import boofcv.struct.image.GrayF32;
-import boofcv.struct.image.GrayU8;
 
 public class Camera2BasicFragment extends Fragment
         implements View.OnClickListener, FragmentCompat.OnRequestPermissionsResultCallback {
@@ -110,22 +96,22 @@ public class Camera2BasicFragment extends Fragment
     /**
      * Camera state: Showing camera preview.
      */
-    private static final int STATE_SHOWING_CAMERA_PREVIEW = 0;
+    private static final int STATE_PREVIEW = 0;
 
     /**
      * Camera state: Waiting for the focus to be locked.
      */
-    private static final int STATE_WAITING_FOR_FOCUS_LOCK = 1;
+    private static final int STATE_WAITING_LOCK = 1;
 
     /**
      * Camera state: Waiting for the exposure to be precapture state.
      */
-    private static final int STATE_WAITING_FOR_EXPOSURE_TO_BE_PRECAPTURE = 2;
+    private static final int STATE_WAITING_PRECAPTURE = 2;
 
     /**
      * Camera state: Waiting for the exposure state to be something other than precapture.
      */
-    private static final int STATE_WAITING_FOR_EXPOSURE_TO_NOT_BE_PRECAPTURE = 3;
+    private static final int STATE_WAITING_NON_PRECAPTURE = 3;
 
     /**
      * Camera state: Picture was taken.
@@ -249,24 +235,17 @@ public class Camera2BasicFragment extends Fragment
     private File mFile;
 
     /**
-     * TODO Do the image processing - this a callback object for the {@link ImageReader}. "onImageAvailable" will be called when a
+     * This a callback object for the {@link ImageReader}. "onImageAvailable" will be called when a
      * still image is ready to be saved.
      */
     private final ImageReader.OnImageAvailableListener mOnImageAvailableListener
             = new ImageReader.OnImageAvailableListener() {
+
         @Override
         public void onImageAvailable(ImageReader reader) {
-            Image image =  reader.acquireNextImage();       // TODO see https://stackoverflow.com/a/43564630/1200764
-            if (null != mBackgroundHandler) {
-                mBackgroundHandler.post(
-                        new ImageSaver(
-                                image /*,                          // TODO see https://stackoverflow.com/a/43564630/1200764
-                                mFile */ ));  // push ImageSaver runnable/task onto the backgroundthread's message queue to be executed on the backgroundthread
-                if (image != null) {             // ?? causes an exception because !when the app starts! closed before can save                // TODO see https://stackoverflow.com/a/43564630/1200764
-                    image.close();               // ?? causes an exception because !when the app starts! closed before can save                // TODO see https://stackoverflow.com/a/43564630/1200764
-                }
-            }
+            mBackgroundHandler.post(new ImageSaver(reader.acquireNextImage(), mFile));
         }
+
     };
 
     /**
@@ -284,7 +263,7 @@ public class Camera2BasicFragment extends Fragment
      *
      * @see #mCaptureCallback
      */
-    private int mState = STATE_SHOWING_CAMERA_PREVIEW;
+    private int mState = STATE_PREVIEW;
 
     /**
      * A {@link Semaphore} to prevent the app from exiting before closing the camera.
@@ -309,20 +288,19 @@ public class Camera2BasicFragment extends Fragment
 
         private void process(CaptureResult result) {
             switch (mState) {
-                case STATE_SHOWING_CAMERA_PREVIEW: {
+                case STATE_PREVIEW: {
                     // We have nothing to do when the camera preview is working normally.
                     break;
                 }
-                case STATE_WAITING_FOR_FOCUS_LOCK: {
-                    Integer afState = result.get(CaptureResult.CONTROL_AF_STATE); // check the auto-focus state
-                    if (afState == null) {                                        // no particular auto-focus state: capture a frame
+                case STATE_WAITING_LOCK: {
+                    Integer afState = result.get(CaptureResult.CONTROL_AF_STATE);
+                    if (afState == null) {
                         captureStillPicture();
-                                                                                    // ? missing  mState = STATE_PICTURE_TAKEN;  ?
-                    } else if (CaptureResult.CONTROL_AF_STATE_FOCUSED_LOCKED == afState ||      // autofocus is locked, may be able to capture a frame
+                    } else if (CaptureResult.CONTROL_AF_STATE_FOCUSED_LOCKED == afState ||
                             CaptureResult.CONTROL_AF_STATE_NOT_FOCUSED_LOCKED == afState) {
                         // CONTROL_AE_STATE can be null on some devices
-                        Integer aeState = result.get(CaptureResult.CONTROL_AE_STATE); // check the auto-exposure state
-                        if (aeState == null ||                                        // no particular auto-exposure state or auto-exposure state is converged/ready: capture a frame
+                        Integer aeState = result.get(CaptureResult.CONTROL_AE_STATE);
+                        if (aeState == null ||
                                 aeState == CaptureResult.CONTROL_AE_STATE_CONVERGED) {
                             mState = STATE_PICTURE_TAKEN;
                             captureStillPicture();
@@ -332,21 +310,20 @@ public class Camera2BasicFragment extends Fragment
                     }
                     break;
                 }
-                case STATE_WAITING_FOR_EXPOSURE_TO_BE_PRECAPTURE: {
+                case STATE_WAITING_PRECAPTURE: {
                     // CONTROL_AE_STATE can be null on some devices
-                    Integer aeState = result.get(CaptureResult.CONTROL_AE_STATE); // check the auto-exposure state
+                    Integer aeState = result.get(CaptureResult.CONTROL_AE_STATE);
                     if (aeState == null ||
                             aeState == CaptureResult.CONTROL_AE_STATE_PRECAPTURE ||
                             aeState == CaptureRequest.CONTROL_AE_STATE_FLASH_REQUIRED) {
-                        mState = STATE_WAITING_FOR_EXPOSURE_TO_NOT_BE_PRECAPTURE;
+                        mState = STATE_WAITING_NON_PRECAPTURE;
                     }
                     break;
                 }
-                case STATE_WAITING_FOR_EXPOSURE_TO_NOT_BE_PRECAPTURE: {
+                case STATE_WAITING_NON_PRECAPTURE: {
                     // CONTROL_AE_STATE can be null on some devices
-                    Integer aeState = result.get(CaptureResult.CONTROL_AE_STATE); // check the auto-exposure state
-                    if (aeState == null ||
-                            aeState != CaptureResult.CONTROL_AE_STATE_PRECAPTURE) {
+                    Integer aeState = result.get(CaptureResult.CONTROL_AE_STATE);
+                    if (aeState == null || aeState != CaptureResult.CONTROL_AE_STATE_PRECAPTURE) {
                         mState = STATE_PICTURE_TAKEN;
                         captureStillPicture();
                     }
@@ -533,21 +510,10 @@ public class Camera2BasicFragment extends Fragment
 
                 // For still image captures, we use the largest available size.
                 Size largest = Collections.max(
-//                        Arrays.asList(map.getOutputSizes(ImageFormat.JPEG)),              // TODO see https://stackoverflow.com/a/43564630/1200764
-                        Arrays.asList(map.getOutputSizes(ImageFormat.YUV_420_888)),         // TODO see https://stackoverflow.com/a/43564630/1200764
+                        Arrays.asList(map.getOutputSizes(ImageFormat.JPEG)),
                         new CompareSizesByArea());
-
-                /* TODO - "the ImageReader class allows direct application access to image data rendered into a {@link android.view.Surface"
-                 */
-//                mImageReader = ImageReader.newInstance(largest.getWidth(), largest.getHeight(), // TODO see https://stackoverflow.com/a/43564630/1200764
-//                        ImageFormat.JPEG, /*maxImages*/2);                                      // TODO see https://stackoverflow.com/a/43564630/1200764
-                mImageReader = ImageReader.newInstance(largest.getWidth()/16, largest.getHeight()/16,
-                        ImageFormat.YUV_420_888, /*maxImages*/2);
-
-                /* TODO - this configures the image processing as a callback that is called whenever a frame is available
-                    - mOnImageAvailableListener is a  ImageReader.OnImageAvailableListener, which is called whenever mImageReader has a frame available to process
-                    - mBackgroundHandler is a Handler
-                 */
+                mImageReader = ImageReader.newInstance(largest.getWidth(), largest.getHeight(),
+                        ImageFormat.JPEG, /*maxImages*/2);
                 mImageReader.setOnImageAvailableListener(
                         mOnImageAvailableListener, mBackgroundHandler);
 
@@ -704,7 +670,6 @@ public class Camera2BasicFragment extends Fragment
     }
 
     /**
-     * TODO see https://stackoverflow.com/a/43564630/1200764
      * Creates a new {@link CameraCaptureSession} for camera preview.
      */
     private void createCameraPreviewSession() {
@@ -722,9 +687,6 @@ public class Camera2BasicFragment extends Fragment
             mPreviewRequestBuilder
                     = mCameraDevice.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW);
             mPreviewRequestBuilder.addTarget(surface);
-
-            Surface mImageSurface = mImageReader.getSurface();          // TODO see https://stackoverflow.com/a/43564630/1200764
-            mPreviewRequestBuilder.addTarget(mImageSurface);            // TODO see https://stackoverflow.com/a/43564630/1200764
 
             // Here, we create a CameraCaptureSession for camera preview.
             mCameraDevice.createCaptureSession(Arrays.asList(surface, mImageReader.getSurface()),
@@ -804,7 +766,6 @@ public class Camera2BasicFragment extends Fragment
      * Initiate a still image capture.
      */
     private void takePicture() {
-        Log.i("Camera2BasicFragment","takePicture()");
         lockFocus();
     }
 
@@ -817,7 +778,7 @@ public class Camera2BasicFragment extends Fragment
             mPreviewRequestBuilder.set(CaptureRequest.CONTROL_AF_TRIGGER,
                     CameraMetadata.CONTROL_AF_TRIGGER_START);
             // Tell #mCaptureCallback to wait for the lock.
-            mState = STATE_WAITING_FOR_FOCUS_LOCK;
+            mState = STATE_WAITING_LOCK;
             mCaptureSession.capture(mPreviewRequestBuilder.build(), mCaptureCallback,
                     mBackgroundHandler);
         } catch (CameraAccessException e) {
@@ -830,13 +791,12 @@ public class Camera2BasicFragment extends Fragment
      * we get a response in {@link #mCaptureCallback} from {@link #lockFocus()}.
      */
     private void runPrecaptureSequence() {
-        Log.i("Camera2BasicFragment","runPrecaptureSequence()");
         try {
             // This is how to tell the camera to trigger.
             mPreviewRequestBuilder.set(CaptureRequest.CONTROL_AE_PRECAPTURE_TRIGGER,
                     CaptureRequest.CONTROL_AE_PRECAPTURE_TRIGGER_START);
             // Tell #mCaptureCallback to wait for the precapture sequence to be set.
-            mState = STATE_WAITING_FOR_EXPOSURE_TO_BE_PRECAPTURE;
+            mState = STATE_WAITING_PRECAPTURE;
             mCaptureSession.capture(mPreviewRequestBuilder.build(), mCaptureCallback,
                     mBackgroundHandler);
         } catch (CameraAccessException e) {
@@ -915,7 +875,7 @@ public class Camera2BasicFragment extends Fragment
             mCaptureSession.capture(mPreviewRequestBuilder.build(), mCaptureCallback,
                     mBackgroundHandler);
             // After this, the camera will go back to the normal state of preview.
-            mState = STATE_SHOWING_CAMERA_PREVIEW;
+            mState = STATE_PREVIEW;
             mCaptureSession.setRepeatingRequest(mPreviewRequest, mCaptureCallback,
                     mBackgroundHandler);
         } catch (CameraAccessException e) {
@@ -925,7 +885,6 @@ public class Camera2BasicFragment extends Fragment
 
     @Override
     public void onClick(View view) {
-        Log.i("Camera2BasicFragment","onClick(View view)");
         switch (view.getId()) {
             case R.id.picture: {
                 takePicture();
@@ -959,123 +918,40 @@ public class Camera2BasicFragment extends Fragment
         /**
          * The JPEG image
          */
-        //private final Image mImage;
+        private final Image mImage;
         /**
          * The file we save the image into.
          */
-        //private final File mFile;
+        private final File mFile;
 
-        byte[] luminanceBytes;
-        int imageWidth;
-        int imageHeight;
-
-        public ImageSaver(Image image /*, File file*/) {
-            Log.i("ImageSaver","ImageSaver(Image image)");
-            long startTime = Calendar.getInstance().getTimeInMillis();
-            Log.i("ImageSaver","ImageSaver(Image image): start = "+startTime);
-//            mImage = image;
-//            mFile = file;
-            ByteBuffer luminanceBuffer = /*mImage*/image.getPlanes()[0].getBuffer();
-            Log.i("ImageSaver","ImageSaver(Image image): after image.getPlanes()[0].getBuffer() in "+timeElapsed(startTime)+"ms");
-            /*byte[]*/ luminanceBytes = new byte[luminanceBuffer.remaining()];  // buffer size: current position is zero, remaining() gives "the number of elements between the current position and the limit"
-            Log.i("ImageSaver","ImageSaver(Image image): after luminanceBytes = new byte[luminanceBuffer.remaining()] in "+timeElapsed(startTime)+"ms");
-            luminanceBuffer.get(luminanceBytes);                            // copy from buffer to bytes: get() "transfers bytes from this buffer into the given destination array"
-            imageWidth = image.getWidth();
-            imageHeight = image.getHeight();
-            Log.i("ImageSaver","ImageSaver(Image image): end after "+timeElapsed(startTime)+"ms");
+        public ImageSaver(Image image, File file) {
+            mImage = image;
+            mFile = file;
         }
 
         @Override
         public void run() {
-            Log.i("ImageSaver","run()");
-            long startTime = Calendar.getInstance().getTimeInMillis();
-            Log.i("ImageSaver","run(): start = "+startTime);
-//            ByteBuffer buffer = mImage.getPlanes()[0].getBuffer();
-//            byte[] bytes = new byte[buffer.remaining()];
-//            buffer.get(bytes);
-//            FileOutputStream output = null;
+            ByteBuffer buffer = mImage.getPlanes()[0].getBuffer();
+            byte[] bytes = new byte[buffer.remaining()];
+            buffer.get(bytes);
+            FileOutputStream output = null;
             try {
-                Log.i("ImageSaver","run() : doing some work in the Try block");
-                Random random = new Random();
-                if ( 1== random.nextInt() ) {
-                    Log.i("ImageSaver","run() : throwing an IOException at random while doing some work in the Try block");
-                    throw new IOException("No particular reason: ImageSaver.run() : throwing an IOException at random while doing some work in the Try block");
-                }
-                // dummy image processing code - https://boofcv.org/index.php?title=Android_support
-                long algorithmStepStartTime =0L;
-                algorithmStepStartTime = Calendar.getInstance().getTimeInMillis();
-                GrayF32 grayImage = new GrayF32(imageWidth,imageHeight);
-                Log.i("ImageSaver","run() : after constructing grayImage in "+timeElapsed(algorithmStepStartTime)+"ms");
-                // from NV21 to gray scale
-                algorithmStepStartTime = Calendar.getInstance().getTimeInMillis();
-                ConvertNV21.nv21ToGray(luminanceBytes,imageWidth,imageHeight, grayImage);
-                Log.i("ImageSaver","run() : after converting nv21ToGray in "+timeElapsed(algorithmStepStartTime)+"ms");
-
-                // start try detecting tags in the frame
-                double BOOFCV_TAG_WIDTH=0.14;
-                int imageWidthInt = grayImage.getHeight(); // new Double(matGray.size().width).intValue();
-                int imageHeightInt = grayImage.getWidth(); //new Double(matGray.size().height).intValue();
-                float imageWidthFloat =  (float)imageWidthInt; // new Double(matGray.size().width).intValue();
-                float imageHeightFloat = (float)imageHeightInt; //new Double(matGray.size().height).intValue();
-                float  focal_midpoint_pixels_x = imageWidthFloat/2.0f;
-                float  focal_midpoint_pixels_y = imageHeightFloat/2.0f;
-
-                double skew = 0.0;
-
-                // TODO - 640 is now a magic number : it is the image width in pixels at the time of calibration of focal length
-                float focal_length_in_pixels_x = 519.902859f * (imageWidthFloat/640.0f);  // TODO - for Samsung Galaxy S3s from /mnt/nixbig/ownCloud/project_AA1__1_1/results/2016_12_04_callibrate_in_ROS/calibrationdata_grey/ost.txt
-                float focal_length_in_pixels_y = 518.952669f * (imageHeightFloat/480.0f);  // TODO - for Samsung Galaxy S3s from /mnt/nixbig/ownCloud/project_AA1__1_1/results/2016_12_04_callibrate_in_ROS/calibrationdata_grey/ost.txt
-
-
-                Log.i("ImageSaver","run() : config FactoryFiducial.squareBinary");
-                FiducialDetector<GrayF32> detector = FactoryFiducial.squareBinary(
-                        new ConfigFiducialBinary(BOOFCV_TAG_WIDTH),
-                        ConfigThreshold.local(ThresholdType.LOCAL_SQUARE, 10),          // TODO - evaluate parameter - ?'radius'?
-                        GrayF32.class);  // tag size,  type,  ?'radius'?
-                //        detector.setLensDistortion(lensDistortion);
-                Log.i("ImageSaver","run() : config CameraPinhole pinholeModel");
-                CameraPinhole pinholeModel = new CameraPinhole(
-                        focal_length_in_pixels_x, focal_length_in_pixels_y,
-                        skew,
-                        focal_midpoint_pixels_x,focal_midpoint_pixels_y,
-                        imageWidthInt,imageHeightInt);
-                Log.i("ImageSaver","run() : config LensDistortionNarrowFOV pinholeDistort");
-                LensDistortionNarrowFOV pinholeDistort = new LensDistortionPinhole(pinholeModel);
-                Log.i("ImageSaver","run() : config detector.setLensDistortion(pinholeDistort)");
-                detector.setLensDistortion(pinholeDistort);  // TODO - do BoofCV calibration - but assume perfect pinhole camera for now
-
-                // TODO - timing here  c[camera_num]-f[frameprocessed]
-                Log.i("ImageSaver","run() : start detector.detect(grayImage);");
-                Log.i("ImageSaver","run() : start detector.detect(grayImage) at "+Calendar.getInstance().getTimeInMillis());
-                detector.detect(grayImage);
-                Log.i("ImageSaver","run() : after detector.detect(grayImage) in "+timeElapsed(startTime)+"ms");
-                Log.i("ImageSaver","run() : finished detector.detect(grayImage);");
-
-                // end dummy image processing code - https://boofcv.org/index.php?title=Android_support
-//                output = new FileOutputStream(mFile);
-//                output.write(bytes);
+                output = new FileOutputStream(mFile);
+                output.write(bytes);
             } catch (IOException e) {
                 e.printStackTrace();
             } finally {
-//                mImage.close();
-//                if (null != output) {
-//                    try {
-//                        output.close();
-//                    } catch (IOException e) {
-//                        e.printStackTrace();
-//                    }
-//                }
+                mImage.close();
+                if (null != output) {
+                    try {
+                        output.close();
+                    } catch (IOException e) {
+                        e.printStackTrace();
+                    }
+                }
             }
         }
 
-    }
-
-    private static long timeElapsed(long startTime) {
-        long timeNow;
-        long timeElapsed;
-        timeNow = Calendar.getInstance().getTimeInMillis();
-        timeElapsed = timeNow - startTime;
-        return timeElapsed;
     }
 
     /**
