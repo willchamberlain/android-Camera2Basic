@@ -47,10 +47,12 @@ import android.os.AsyncTask;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.HandlerThread;
+import android.os.Process;
 import android.support.annotation.NonNull;
 import android.support.v13.app.FragmentCompat;
 import android.support.v4.content.ContextCompat;
 import android.util.Log;
+import android.util.Range;
 import android.util.Size;
 import android.util.SparseIntArray;
 import android.view.LayoutInflater;
@@ -70,8 +72,13 @@ import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Random;
+import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.Semaphore;
+import java.util.concurrent.ThreadFactory;
+import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import boofcv.abst.fiducial.FiducialDetector;
 import boofcv.alg.distort.LensDistortionNarrowFOV;
@@ -83,6 +90,7 @@ import boofcv.factory.filter.binary.ConfigThreshold;
 import boofcv.factory.filter.binary.ThresholdType;
 import boofcv.struct.calib.CameraPinhole;
 import boofcv.struct.image.GrayF32;
+
 
 public class Camera2BasicFragment extends Fragment
         implements View.OnClickListener, FragmentCompat.OnRequestPermissionsResultCallback {
@@ -249,6 +257,12 @@ public class Camera2BasicFragment extends Fragment
      */
     private File mFile;
 
+    private int skipRate = 10; // initialise to be over 10
+    long frameNum = 0;
+    long skipRateReducedOnFrameNum = 0;
+    TaskCompletionTimer taskCompletionTimer = TaskCompletionTimer.instance();
+
+
     /**
      * TODO Do the image processing - this a callback object for the {@link ImageReader}. "onImageAvailable" will be called when a
      * still image is ready to be saved.
@@ -262,6 +276,7 @@ public class Camera2BasicFragment extends Fragment
         @Override
         public void onImageAvailable(ImageReader reader) {
             Image image =  reader.acquireNextImage();       // TODO see https://stackoverflow.com/a/43564630/1200764
+            frameNum++;  if (frameNum == Long.MAX_VALUE) { frameNum=1; }
             switch (RUN_ASYNC_METHOD) {
                 case RUN_ASYNC_BACKGROUNDHANDLER: {
                     if (null != mBackgroundHandler) {
@@ -273,12 +288,39 @@ public class Camera2BasicFragment extends Fragment
                             image.close();               // ?? causes an exception because !when the app starts! closed before can save                // TODO see https://stackoverflow.com/a/43564630/1200764
                         }
                     }
+                    break;
                 }
                 case RUN_ASYNC_ASYNCTASK: {
-                    new ImageSaverAsyncTask(image, taskCompletionTimer).execute();
-                    if (image != null) {             // ?? causes an exception because !when the app starts! closed before can save                // TODO see https://stackoverflow.com/a/43564630/1200764
-                        image.close();               // ?? causes an exception because !when the app starts! closed before can save                // TODO see https://stackoverflow.com/a/43564630/1200764
+                    if (skipRate <= 10 && skipRate>0 && frameNum%skipRate == 0 ) { // skip this image - e.g. if skipRate == 8 and frameNum == 16
+                        Log.i("Camera2BasicFragment","skipping frame "+frameNum+" on skipRate "+skipRate);
+                        if (image != null) {             // ?? causes an exception because !when the app starts! closed before can save                // TODO see https://stackoverflow.com/a/43564630/1200764
+                            image.close();               // ?? causes an exception because !when the app starts! closed before can save                // TODO see https://stackoverflow.com/a/43564630/1200764
+                        }
+                        break;
                     }
+                    int TARGET_FRAME_RATE = 10;
+                    if ( skipRateReducedOnFrameNum < frameNum - 100 && skipRate > 2 && taskCompletionTimer.overlapWithLastInitiation() > (5000/TARGET_FRAME_RATE)) { // more than 1s overlap; going wrong
+                        skipRate--; if(skipRate < 2){ skipRate = 2; }
+                        skipRateReducedOnFrameNum = frameNum;
+                        Log.i("Camera2BasicFragment","at frame "+frameNum+" reduced skipRate to "+skipRate+" on taskCompletionTimer.overlapWithLastInitiation() = "+taskCompletionTimer.overlapWithLastInitiation()+" > (5000/"+TARGET_FRAME_RATE+")");
+                    }
+                    try {
+                        //  new ImageSaverAsyncTask(image, taskCompletionTimer).executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR);  // https://stackoverflow.com/questions/18266161/achieving-concurrency-using-asynctask  https://developer.android.com/reference/java/util/concurrent/Executor.html
+                        new ImageSaverAsyncTask(image, taskCompletionTimer).executeOnExecutor(threadPoolExecutor);  // https://stackoverflow.com/questions/18266161/achieving-concurrency-using-asynctask  https://developer.android.com/reference/java/util/concurrent/Executor.html
+
+                        if (image != null) {             // ?? causes an exception because !when the app starts! closed before can save                // TODO see https://stackoverflow.com/a/43564630/1200764
+                            image.close();               // ?? causes an exception because !when the app starts! closed before can save                // TODO see https://stackoverflow.com/a/43564630/1200764
+                        }
+                    } catch (java.util.concurrent.RejectedExecutionException ree) {
+                        Log.w("Camera2BasicFragment","onImageAvailable(ImageReader reader): hit the limit of available threads with a java.util.concurrent.RejectedExecutionException");
+                        if(skipRate <= 10){ skipRate--; skipRateReducedOnFrameNum = frameNum; }
+                        if(skipRate > 10){ skipRate = 10; }
+                        if(skipRate < 2){ skipRate = 2; }
+                        if (image != null) {             // ?? causes an exception because !when the app starts! closed before can save                // TODO see https://stackoverflow.com/a/43564630/1200764
+                            image.close();               // ?? causes an exception because !when the app starts! closed before can save                // TODO see https://stackoverflow.com/a/43564630/1200764
+                        }
+                    }
+                    break;
                 }
                 default:
             }
@@ -479,7 +521,11 @@ public class Camera2BasicFragment extends Fragment
     @Override
     public void onResume() {
         super.onResume();
+
+
         startBackgroundThread();
+        threadPoolExecutor.allowCoreThreadTimeOut(true);
+
 
         // When the screen is turned off and turned back on, the SurfaceTexture is already
         // available, and "onSurfaceTextureAvailable" will not be called. In that case, we can open
@@ -490,6 +536,8 @@ public class Camera2BasicFragment extends Fragment
         } else {
             mTextureView.setSurfaceTextureListener(mSurfaceTextureListener);
         }
+
+
     }
 
     @Override
@@ -531,6 +579,7 @@ public class Camera2BasicFragment extends Fragment
         Activity activity = getActivity();
         CameraManager manager = (CameraManager) activity.getSystemService(Context.CAMERA_SERVICE);
         try {
+            listCameraCharacteristics(manager);
             for (String cameraId : manager.getCameraIdList()) {
                 CameraCharacteristics characteristics
                         = manager.getCameraCharacteristics(cameraId);
@@ -664,10 +713,27 @@ public class Camera2BasicFragment extends Fragment
                 throw new RuntimeException("Time out waiting to lock camera opening.");
             }
             manager.openCamera(mCameraId, mStateCallback, mBackgroundHandler);
+            listCameraCharacteristics(manager);
         } catch (CameraAccessException e) {
             e.printStackTrace();
         } catch (InterruptedException e) {
             throw new RuntimeException("Interrupted while trying to lock camera opening.", e);
+        }
+    }
+
+    private void listCameraCharacteristics(CameraManager manager) throws CameraAccessException {
+        String[] cameras = manager.getCameraIdList();
+        for(String camera : cameras) {
+            CameraCharacteristics cc = manager.getCameraCharacteristics(camera);
+            CameraCharacteristics.Key<int[]> aa = cc.REQUEST_AVAILABLE_CAPABILITIES;
+            for (int i = 0; i < cc.get(CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES).length; i++) {
+                Log.e(TAG, "Capability: " + cc.get(CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES)[i]);
+            }
+        }
+        for(String camera : cameras) {
+            CameraCharacteristics cc = manager.getCameraCharacteristics(camera);
+            Range<Integer>[] fpsRange = cc.get(cc.CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES);
+            Log.e(TAG, "fpsRange: [" + fpsRange[0] + "," + fpsRange[1] + "]");
         }
     }
 
@@ -938,6 +1004,8 @@ public class Camera2BasicFragment extends Fragment
             // Reset the auto-focus trigger
             mPreviewRequestBuilder.set(CaptureRequest.CONTROL_AF_TRIGGER,
                     CameraMetadata.CONTROL_AF_TRIGGER_CANCEL);
+            final Range<Integer> FIFTEEN_FPS = new Range<Integer>(15,15);
+            mPreviewRequestBuilder.set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, FIFTEEN_FPS);
             setAutoFlash(mPreviewRequestBuilder);
             mCaptureSession.capture(mPreviewRequestBuilder.build(), mCaptureCallback,
                     mBackgroundHandler);
@@ -982,16 +1050,6 @@ public class Camera2BasicFragment extends Fragment
      * Saves a JPEG {@link Image} into the specified {@link File}.
      */
     private static class ImageSaver implements Runnable {
-
-        /**
-         * The JPEG image
-         */
-        //private final Image mImage;
-        /**
-         * The file we save the image into.
-         */
-        //private final File mFile;
-
         byte[] luminanceBytes;
         int imageWidth;
         int imageHeight;
@@ -1000,8 +1058,6 @@ public class Camera2BasicFragment extends Fragment
             Log.i("ImageSaver","ImageSaver(Image image)");
             long startTime = Calendar.getInstance().getTimeInMillis();
             Log.i("ImageSaver","ImageSaver(Image image): start = "+startTime);
-//            mImage = image;
-//            mFile = file;
             ByteBuffer luminanceBuffer = /*mImage*/image.getPlanes()[0].getBuffer();
             Log.i("ImageSaver","ImageSaver(Image image): after image.getPlanes()[0].getBuffer() in "+timeElapsed(startTime)+"ms");
             /*byte[]*/ luminanceBytes = new byte[luminanceBuffer.remaining()];  // buffer size: current position is zero, remaining() gives "the number of elements between the current position and the limit"
@@ -1017,10 +1073,6 @@ public class Camera2BasicFragment extends Fragment
             Log.i("ImageSaver","run()");
             long startTime = Calendar.getInstance().getTimeInMillis();
             Log.i("ImageSaver","run(): start = "+startTime);
-//            ByteBuffer buffer = mImage.getPlanes()[0].getBuffer();
-//            byte[] bytes = new byte[buffer.remaining()];
-//            buffer.get(bytes);
-//            FileOutputStream output = null;
             try {
                 Log.i("ImageSaver","run() : doing some work in the Try block");
                 Random random = new Random();
@@ -1089,32 +1141,26 @@ public class Camera2BasicFragment extends Fragment
                         Log.i(logTag, "run() : tag detection "+i+" has no id; detector.hasUniqueID() == false ");
                     }
                 }
-
-                // end dummy image processing code - https://boofcv.org/index.php?title=Android_support
-//                output = new FileOutputStream(mFile);
-//                output.write(bytes);
             } catch (IOException e) {
                 e.printStackTrace();
             } finally {
-//                mImage.close();
-//                if (null != output) {
-//                    try {
-//                        output.close();
-//                    } catch (IOException e) {
-//                        e.printStackTrace();
-//                    }
-//                }
             }
         }
 
     }
 
 
-    private static class TaskCompletionTimer {
+    static private class TaskCompletionTimer {
 
         long threadCompletions = 1L;
+        long previousInitiationTimeMs = -1;
         long previousExecutionStartTimeMs = -1;
         long previousExecutionEndTimeMs = -1;
+        long overlapWithLastInitiation = -1;
+        long overlapWithLastExecution = -1;
+        long completionAfterPrevious = -1;
+        long executionPeriod = -1;
+        AtomicInteger concurrentThreadsExecuting = new AtomicInteger(0);
 
         private TaskCompletionTimer() {
         }
@@ -1123,19 +1169,72 @@ public class Camera2BasicFragment extends Fragment
             return new TaskCompletionTimer();
         }
 
+        long overlapWithLastInitiation() {
+            return overlapWithLastInitiation;
+        }
 
-        void completedTask(long executionThreadId, long executionStartTimeMs, long executionEndTimeMs) {
+        void incConcurrentThreadsExecuting() {
+            concurrentThreadsExecuting.incrementAndGet();
+        }
+
+        void decConcurrentThreadsExecuting() {
+            concurrentThreadsExecuting.decrementAndGet();
+        }
+
+        int concurrentThreadsExecuting() {
+            return concurrentThreadsExecuting.intValue();
+        }
+
+        void completedTask(long executionThreadId, long initiationTimeMs, long executionStartTimeMs, long executionEndTimeMs) {
+            decConcurrentThreadsExecuting();
             if (threadCompletions>1) {
-                Log.i("completedTask","thread completion "+(executionEndTimeMs-previousExecutionEndTimeMs)+"ms after previous: thread "+executionThreadId+" was the "+threadCompletions+"th thread to complete at "+executionEndTimeMs+", started at "+executionStartTimeMs);
+                overlapWithLastInitiation = executionEndTimeMs-previousInitiationTimeMs;
+                overlapWithLastExecution = executionEndTimeMs-previousInitiationTimeMs;
+                completionAfterPrevious = executionEndTimeMs-previousExecutionEndTimeMs;
+                executionPeriod = executionEndTimeMs-executionStartTimeMs;
+                Log.i("completedTask","thread completion "+completionAfterPrevious+"ms after previous: "+overlapWithLastInitiation+"ms overlap with last started: thread "+executionThreadId+" was the "+threadCompletions+"th thread to complete at "+executionEndTimeMs+", started at "+executionStartTimeMs);
             }
+            previousInitiationTimeMs = initiationTimeMs;
             previousExecutionStartTimeMs = executionStartTimeMs;
             previousExecutionEndTimeMs = executionEndTimeMs;
             threadCompletions++;
         }
-
     }
 
-    TaskCompletionTimer taskCompletionTimer = TaskCompletionTimer.instance();
+
+    private static final ThreadFactory sThreadFactory = new ThreadFactory() {
+        private final AtomicInteger mCount = new AtomicInteger(1);
+
+//        public Thread newThread(Runnable r) {
+//            return new Thread(r, "AsyncTask #" + mCount.getAndIncrement());
+//        }
+
+        @Override
+        public Thread newThread(final Runnable runnable_) {
+            Runnable wrapperRunnable = new Runnable() {
+                @Override
+                public void run() {
+                    try {
+                        android.os.Process.setThreadPriority(Process.THREAD_PRIORITY_FOREGROUND);
+                    } catch (Throwable t) {
+
+                    }
+                    runnable_.run();
+                }
+            };
+            return new Thread(wrapperRunnable);
+        }
+    };
+
+    private static final BlockingQueue<Runnable> sPoolWorkQueue =
+            new LinkedBlockingQueue<Runnable>(128);  // allow 128 in the queue
+
+
+    ThreadPoolExecutor threadPoolExecutor = new ThreadPoolExecutor(
+            8 , 16 , 30 , TimeUnit.SECONDS,    // CORE_POOL_SIZE, MAXIMUM_POOL_SIZE, KEEP_ALIVE_SECONDS, TimeUnit.SECONDS,
+            sPoolWorkQueue, sThreadFactory);
+
+
 
     /*
     TODO - see - https://stackoverflow.com/questions/25647881/android-asynctask-example-and-explanation
@@ -1144,35 +1243,21 @@ public class Camera2BasicFragment extends Fragment
      * Saves a JPEG {@link Image} into the specified {@link File}.
      */
     private class ImageSaverAsyncTask extends AsyncTask<Void, Void, Long> { //parameter array type, progress type, return type
-
-        /**
-         * The JPEG image
-         */
-        //private final Image mImage;
-        /**
-         * The file we save the image into.
-         */
-        //private final File mFile;
-
         byte[] luminanceBytes;
         int imageWidth;
         int imageHeight;
 
-
-        TaskCompletionTimer taskCompletionTimer;
+        long instantiationTimeMs = -1L;
         long executionThreadId = -1L;
         long executionStartTimeMs = -1L;
         long executionEndTimeMs = -1L;
-
-
 
         public ImageSaverAsyncTask(Image image, TaskCompletionTimer taskCompletionTimer_) {
             super();
             Log.i("ImageSaverAsyncTask","ImageSaverAsyncTask(Image image)");
             long startTime = Calendar.getInstance().getTimeInMillis();
+            instantiationTimeMs = startTime;
             Log.i("ImageSaverAsyncTask","ImageSaverAsyncTask(Image image): start = "+startTime);
-//            mImage = image;
-//            mFile = file;
             ByteBuffer luminanceBuffer = /*mImage*/image.getPlanes()[0].getBuffer();
             Log.i("ImageSaverAsyncTask","ImageSaverAsyncTask(Image image): after image.getPlanes()[0].getBuffer() in "+timeElapsed(startTime)+"ms");
             /*byte[]*/ luminanceBytes = new byte[luminanceBuffer.remaining()];  // buffer size: current position is zero, remaining() gives "the number of elements between the current position and the limit"
@@ -1189,35 +1274,14 @@ public class Camera2BasicFragment extends Fragment
             executionThreadId = Thread.currentThread().getId();
             String logTag = "ImgeSv_p="+executionThreadId;
 
-//            for (int i_ = 0; i_ < images.length; i_++) {
-
-//                Image image = images[i_];
-//                Log.i(logTag, "ImageSaver(Image image)");
-
-//                long startTime = Calendar.getInstance().getTimeInMillis();
-//                Log.i(logTag, "ImageSaver(Image image): start = " + startTime);
-////            mImage = image;
-////            mFile = file;
-//                ByteBuffer luminanceBuffer = /*mImage*/image.getPlanes()[0].getBuffer();
-//                Log.i(logTag, "ImageSaver(Image image): after image.getPlanes()[0].getBuffer() in " + timeElapsed(startTime) + "ms");
-//            /*byte[]*/
-//                luminanceBytes = new byte[luminanceBuffer.remaining()];  // buffer size: current position is zero, remaining() gives "the number of elements between the current position and the limit"
-//                Log.i(logTag, "ImageSaver(Image image): after luminanceBytes = new byte[luminanceBuffer.remaining()] in " + timeElapsed(startTime) + "ms");
-//                luminanceBuffer.get(luminanceBytes);                            // copy from buffer to bytes: get() "transfers bytes from this buffer into the given destination array"
-//                imageWidth = image.getWidth();
-//                imageHeight = image.getHeight();
-//                Log.i(logTag, "ImageSaver(Image image): end after " + timeElapsed(startTime) + "ms");
-
-
                 long startTime = Calendar.getInstance().getTimeInMillis();
                 Log.i(logTag, "run(): start = " + startTime);
                 executionStartTimeMs = startTime;
-//            ByteBuffer buffer = mImage.getPlanes()[0].getBuffer();
-//            byte[] bytes = new byte[buffer.remaining()];
-//            buffer.get(bytes);
-//            FileOutputStream output = null;
+                taskCompletionTimer.incConcurrentThreadsExecuting();
                 try {
-                    Log.i(logTag, "run() : doing some work in the Try block");
+                    Log.i(logTag, "run() : doing some work in the Try block: concurrentThreadsExecuting = "+taskCompletionTimer.concurrentThreadsExecuting());
+                    Log.i(logTag, "run() : doing some work in the Try block: Runtime.getRuntime().availableProcessors() = "+Runtime.getRuntime().availableProcessors());
+
                     Random random = new Random();
                     if (1 == random.nextInt()) {
                         Log.i(logTag, "run() : throwing an IOException at random while doing some work in the Try block");
@@ -1279,28 +1343,15 @@ public class Camera2BasicFragment extends Fragment
                         if( detector.hasUniqueID() ) {
                             long tag_id_long = detector.getId(i);
                             Log.i(logTag, "run() : tag detection "+i+" after detector.getId("+i+") = "+tag_id_long+" in " + timeElapsed(timeNow) + "ms");
-                            Log.i(logTag, "run() : tag detection "+i+" after detector.getId("+i+") = "+tag_id_long+" in " + timeElapsed(startTime) + "ms");
+                            Log.i(logTag, "run() : tag detection "+i+" after detector.getId("+i+") = "+tag_id_long+" in " + timeElapsed(startTime) + "ms from start");
                         } else {
                             Log.i(logTag, "run() : tag detection "+i+" has no id; detector.hasUniqueID() == false ");
                         }
                     }
-
-                    // end dummy image processing code - https://boofcv.org/index.php?title=Android_support
-//                output = new FileOutputStream(mFile);
-//                output.write(bytes);
                 } catch (IOException e) {
                     e.printStackTrace();
                 } finally {
-//                mImage.close();
-//                if (null != output) {
-//                    try {
-//                        output.close();
-//                    } catch (IOException e) {
-//                        e.printStackTrace();
-//                    }
-//                }
                 }
-//            }
             executionEndTimeMs = Calendar.getInstance().getTimeInMillis();
             return new Long(0L);
         }
@@ -1318,7 +1369,7 @@ public class Camera2BasicFragment extends Fragment
         @Override
         protected void onPostExecute(Long result) {
             super.onPostExecute(result);
-            taskCompletionTimer.completedTask(executionThreadId, executionStartTimeMs, executionEndTimeMs);
+            taskCompletionTimer.completedTask(executionThreadId, instantiationTimeMs, executionStartTimeMs, executionEndTimeMs);
         }
 
     }
