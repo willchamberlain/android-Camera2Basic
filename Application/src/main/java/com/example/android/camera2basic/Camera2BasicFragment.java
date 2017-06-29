@@ -43,6 +43,7 @@ import android.hardware.camera2.TotalCaptureResult;
 import android.hardware.camera2.params.StreamConfigurationMap;
 import android.media.Image;
 import android.media.ImageReader;
+import android.os.AsyncTask;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.HandlerThread;
@@ -60,7 +61,6 @@ import android.view.ViewGroup;
 import android.widget.Toast;
 
 import java.io.File;
-import java.io.FileOutputStream;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
@@ -83,7 +83,6 @@ import boofcv.factory.filter.binary.ConfigThreshold;
 import boofcv.factory.filter.binary.ThresholdType;
 import boofcv.struct.calib.CameraPinhole;
 import boofcv.struct.image.GrayF32;
-import boofcv.struct.image.GrayU8;
 
 public class Camera2BasicFragment extends Fragment
         implements View.OnClickListener, FragmentCompat.OnRequestPermissionsResultCallback {
@@ -232,11 +231,13 @@ public class Camera2BasicFragment extends Fragment
      * An additional thread for running tasks that shouldn't block the UI.
      */
     private HandlerThread mBackgroundThread;
+    private HandlerThread mBackgroundThread2;
 
     /**
      * A {@link Handler} for running tasks in the background.
      */
     private Handler mBackgroundHandler;
+    private Handler mBackgroundHandler2;
 
     /**
      * An {@link ImageReader} that handles still image capture.
@@ -254,17 +255,32 @@ public class Camera2BasicFragment extends Fragment
      */
     private final ImageReader.OnImageAvailableListener mOnImageAvailableListener
             = new ImageReader.OnImageAvailableListener() {
+        final int RUN_ASYNC_BACKGROUNDHANDLER =  10;
+        final int RUN_ASYNC_ASYNCTASK =         20;
+        final int RUN_ASYNC_METHOD =            RUN_ASYNC_ASYNCTASK;
+
         @Override
         public void onImageAvailable(ImageReader reader) {
             Image image =  reader.acquireNextImage();       // TODO see https://stackoverflow.com/a/43564630/1200764
-            if (null != mBackgroundHandler) {
-                mBackgroundHandler.post(
-                        new ImageSaver(
-                                image /*,                          // TODO see https://stackoverflow.com/a/43564630/1200764
+            switch (RUN_ASYNC_METHOD) {
+                case RUN_ASYNC_BACKGROUNDHANDLER: {
+                    if (null != mBackgroundHandler) {
+                        mBackgroundHandler.post(
+                                new ImageSaver(
+                                        image /*,                          // TODO see https://stackoverflow.com/a/43564630/1200764
                                 mFile */ ));  // push ImageSaver runnable/task onto the backgroundthread's message queue to be executed on the backgroundthread
-                if (image != null) {             // ?? causes an exception because !when the app starts! closed before can save                // TODO see https://stackoverflow.com/a/43564630/1200764
-                    image.close();               // ?? causes an exception because !when the app starts! closed before can save                // TODO see https://stackoverflow.com/a/43564630/1200764
+                        if (image != null) {             // ?? causes an exception because !when the app starts! closed before can save                // TODO see https://stackoverflow.com/a/43564630/1200764
+                            image.close();               // ?? causes an exception because !when the app starts! closed before can save                // TODO see https://stackoverflow.com/a/43564630/1200764
+                        }
+                    }
                 }
+                case RUN_ASYNC_ASYNCTASK: {
+                    new ImageSaverAsyncTask(image, taskCompletionTimer).execute();
+                    if (image != null) {             // ?? causes an exception because !when the app starts! closed before can save                // TODO see https://stackoverflow.com/a/43564630/1200764
+                        image.close();               // ?? causes an exception because !when the app starts! closed before can save                // TODO see https://stackoverflow.com/a/43564630/1200764
+                    }
+                }
+                default:
             }
         }
     };
@@ -687,6 +703,9 @@ public class Camera2BasicFragment extends Fragment
         mBackgroundThread = new HandlerThread("CameraBackground");
         mBackgroundThread.start();
         mBackgroundHandler = new Handler(mBackgroundThread.getLooper());
+        mBackgroundThread2 = new HandlerThread("CameraBackground2");
+        mBackgroundThread2.start();
+        mBackgroundHandler2 = new Handler(mBackgroundThread2.getLooper());
     }
 
     /**
@@ -698,6 +717,14 @@ public class Camera2BasicFragment extends Fragment
             mBackgroundThread.join();
             mBackgroundThread = null;
             mBackgroundHandler = null;
+        } catch (InterruptedException e) {
+            e.printStackTrace();
+        }
+        mBackgroundThread2.quitSafely();
+        try {
+            mBackgroundThread2.join();
+            mBackgroundThread2 = null;
+            mBackgroundHandler2 = null;
         } catch (InterruptedException e) {
             e.printStackTrace();
         }
@@ -1045,11 +1072,23 @@ public class Camera2BasicFragment extends Fragment
                 detector.setLensDistortion(pinholeDistort);  // TODO - do BoofCV calibration - but assume perfect pinhole camera for now
 
                 // TODO - timing here  c[camera_num]-f[frameprocessed]
+                long timeNow = Calendar.getInstance().getTimeInMillis();
                 Log.i("ImageSaver","run() : start detector.detect(grayImage);");
                 Log.i("ImageSaver","run() : start detector.detect(grayImage) at "+Calendar.getInstance().getTimeInMillis());
                 detector.detect(grayImage);
                 Log.i("ImageSaver","run() : after detector.detect(grayImage) in "+timeElapsed(startTime)+"ms");
                 Log.i("ImageSaver","run() : finished detector.detect(grayImage);");
+                String logTag = "ImageSaver";
+                for (int i = 0; i < detector.totalFound(); i++) {
+                    timeNow = Calendar.getInstance().getTimeInMillis();
+                    if( detector.hasUniqueID() ) {
+                        long tag_id_long = detector.getId(i);
+                        Log.i(logTag, "run() : tag detection "+i+" after detector.getId("+i+") = "+tag_id_long+" in " + timeElapsed(timeNow) + "ms");
+                        Log.i(logTag, "run() : tag detection "+i+" after detector.getId("+i+") = "+tag_id_long+" in " + timeElapsed(startTime) + "ms");
+                    } else {
+                        Log.i(logTag, "run() : tag detection "+i+" has no id; detector.hasUniqueID() == false ");
+                    }
+                }
 
                 // end dummy image processing code - https://boofcv.org/index.php?title=Android_support
 //                output = new FileOutputStream(mFile);
@@ -1066,6 +1105,220 @@ public class Camera2BasicFragment extends Fragment
 //                    }
 //                }
             }
+        }
+
+    }
+
+
+    private static class TaskCompletionTimer {
+
+        long threadCompletions = 1L;
+        long previousExecutionStartTimeMs = -1;
+        long previousExecutionEndTimeMs = -1;
+
+        private TaskCompletionTimer() {
+        }
+
+        static TaskCompletionTimer instance() {
+            return new TaskCompletionTimer();
+        }
+
+
+        void completedTask(long executionThreadId, long executionStartTimeMs, long executionEndTimeMs) {
+            if (threadCompletions>1) {
+                Log.i("completedTask","thread completion "+(executionEndTimeMs-previousExecutionEndTimeMs)+"ms after previous: thread "+executionThreadId+" was the "+threadCompletions+"th thread to complete at "+executionEndTimeMs+", started at "+executionStartTimeMs);
+            }
+            previousExecutionStartTimeMs = executionStartTimeMs;
+            previousExecutionEndTimeMs = executionEndTimeMs;
+            threadCompletions++;
+        }
+
+    }
+
+    TaskCompletionTimer taskCompletionTimer = TaskCompletionTimer.instance();
+
+    /*
+    TODO - see - https://stackoverflow.com/questions/25647881/android-asynctask-example-and-explanation
+     */
+    /**
+     * Saves a JPEG {@link Image} into the specified {@link File}.
+     */
+    private class ImageSaverAsyncTask extends AsyncTask<Void, Void, Long> { //parameter array type, progress type, return type
+
+        /**
+         * The JPEG image
+         */
+        //private final Image mImage;
+        /**
+         * The file we save the image into.
+         */
+        //private final File mFile;
+
+        byte[] luminanceBytes;
+        int imageWidth;
+        int imageHeight;
+
+
+        TaskCompletionTimer taskCompletionTimer;
+        long executionThreadId = -1L;
+        long executionStartTimeMs = -1L;
+        long executionEndTimeMs = -1L;
+
+
+
+        public ImageSaverAsyncTask(Image image, TaskCompletionTimer taskCompletionTimer_) {
+            super();
+            Log.i("ImageSaverAsyncTask","ImageSaverAsyncTask(Image image)");
+            long startTime = Calendar.getInstance().getTimeInMillis();
+            Log.i("ImageSaverAsyncTask","ImageSaverAsyncTask(Image image): start = "+startTime);
+//            mImage = image;
+//            mFile = file;
+            ByteBuffer luminanceBuffer = /*mImage*/image.getPlanes()[0].getBuffer();
+            Log.i("ImageSaverAsyncTask","ImageSaverAsyncTask(Image image): after image.getPlanes()[0].getBuffer() in "+timeElapsed(startTime)+"ms");
+            /*byte[]*/ luminanceBytes = new byte[luminanceBuffer.remaining()];  // buffer size: current position is zero, remaining() gives "the number of elements between the current position and the limit"
+            Log.i("ImageSaverAsyncTask","ImageSaverAsyncTask(Image image): after luminanceBytes = new byte[luminanceBuffer.remaining()] in "+timeElapsed(startTime)+"ms");
+            luminanceBuffer.get(luminanceBytes);                            // copy from buffer to bytes: get() "transfers bytes from this buffer into the given destination array"
+            imageWidth = image.getWidth();
+            imageHeight = image.getHeight();
+            taskCompletionTimer = taskCompletionTimer_;
+            Log.i("ImageSaverAsyncTask","ImageSaverAsyncTask(Image image): end after "+timeElapsed(startTime)+"ms");
+        }
+
+        @Override
+        protected Long doInBackground(Void... params) { //(Image...  images) {
+            executionThreadId = Thread.currentThread().getId();
+            String logTag = "ImgeSv_p="+executionThreadId;
+
+//            for (int i_ = 0; i_ < images.length; i_++) {
+
+//                Image image = images[i_];
+//                Log.i(logTag, "ImageSaver(Image image)");
+
+//                long startTime = Calendar.getInstance().getTimeInMillis();
+//                Log.i(logTag, "ImageSaver(Image image): start = " + startTime);
+////            mImage = image;
+////            mFile = file;
+//                ByteBuffer luminanceBuffer = /*mImage*/image.getPlanes()[0].getBuffer();
+//                Log.i(logTag, "ImageSaver(Image image): after image.getPlanes()[0].getBuffer() in " + timeElapsed(startTime) + "ms");
+//            /*byte[]*/
+//                luminanceBytes = new byte[luminanceBuffer.remaining()];  // buffer size: current position is zero, remaining() gives "the number of elements between the current position and the limit"
+//                Log.i(logTag, "ImageSaver(Image image): after luminanceBytes = new byte[luminanceBuffer.remaining()] in " + timeElapsed(startTime) + "ms");
+//                luminanceBuffer.get(luminanceBytes);                            // copy from buffer to bytes: get() "transfers bytes from this buffer into the given destination array"
+//                imageWidth = image.getWidth();
+//                imageHeight = image.getHeight();
+//                Log.i(logTag, "ImageSaver(Image image): end after " + timeElapsed(startTime) + "ms");
+
+
+                long startTime = Calendar.getInstance().getTimeInMillis();
+                Log.i(logTag, "run(): start = " + startTime);
+                executionStartTimeMs = startTime;
+//            ByteBuffer buffer = mImage.getPlanes()[0].getBuffer();
+//            byte[] bytes = new byte[buffer.remaining()];
+//            buffer.get(bytes);
+//            FileOutputStream output = null;
+                try {
+                    Log.i(logTag, "run() : doing some work in the Try block");
+                    Random random = new Random();
+                    if (1 == random.nextInt()) {
+                        Log.i(logTag, "run() : throwing an IOException at random while doing some work in the Try block");
+                        throw new IOException("No particular reason: ImageSaver.run() : throwing an IOException at random while doing some work in the Try block");
+                    }
+                    // dummy image processing code - https://boofcv.org/index.php?title=Android_support
+                    long algorithmStepStartTime = 0L;
+                    algorithmStepStartTime = Calendar.getInstance().getTimeInMillis();
+                    GrayF32 grayImage = new GrayF32(imageWidth, imageHeight);
+                    Log.i(logTag, "run() : after constructing grayImage in " + timeElapsed(algorithmStepStartTime) + "ms");
+                    // from NV21 to gray scale
+                    algorithmStepStartTime = Calendar.getInstance().getTimeInMillis();
+                    ConvertNV21.nv21ToGray(luminanceBytes, imageWidth, imageHeight, grayImage);
+                    Log.i(logTag, "run() : after converting nv21ToGray in " + timeElapsed(algorithmStepStartTime) + "ms");
+
+                    // start try detecting tags in the frame
+                    double BOOFCV_TAG_WIDTH = 0.14;
+                    int imageWidthInt = grayImage.getHeight(); // new Double(matGray.size().width).intValue();
+                    int imageHeightInt = grayImage.getWidth(); //new Double(matGray.size().height).intValue();
+                    float imageWidthFloat = (float) imageWidthInt; // new Double(matGray.size().width).intValue();
+                    float imageHeightFloat = (float) imageHeightInt; //new Double(matGray.size().height).intValue();
+                    float focal_midpoint_pixels_x = imageWidthFloat / 2.0f;
+                    float focal_midpoint_pixels_y = imageHeightFloat / 2.0f;
+
+                    double skew = 0.0;
+
+                    // TODO - 640 is now a magic number : it is the image width in pixels at the time of calibration of focal length
+                    float focal_length_in_pixels_x = 519.902859f * (imageWidthFloat / 640.0f);  // TODO - for Samsung Galaxy S3s from /mnt/nixbig/ownCloud/project_AA1__1_1/results/2016_12_04_callibrate_in_ROS/calibrationdata_grey/ost.txt
+                    float focal_length_in_pixels_y = 518.952669f * (imageHeightFloat / 480.0f);  // TODO - for Samsung Galaxy S3s from /mnt/nixbig/ownCloud/project_AA1__1_1/results/2016_12_04_callibrate_in_ROS/calibrationdata_grey/ost.txt
+
+
+                    Log.i(logTag, "run() : config FactoryFiducial.squareBinary");
+                    FiducialDetector<GrayF32> detector = FactoryFiducial.squareBinary(
+                            new ConfigFiducialBinary(BOOFCV_TAG_WIDTH),
+                            ConfigThreshold.local(ThresholdType.LOCAL_SQUARE, 10),          // TODO - evaluate parameter - ?'radius'?
+                            GrayF32.class);  // tag size,  type,  ?'radius'?
+                    //        detector.setLensDistortion(lensDistortion);
+                    Log.i(logTag, "run() : config CameraPinhole pinholeModel");
+                    CameraPinhole pinholeModel = new CameraPinhole(
+                            focal_length_in_pixels_x, focal_length_in_pixels_y,
+                            skew,
+                            focal_midpoint_pixels_x, focal_midpoint_pixels_y,
+                            imageWidthInt, imageHeightInt);
+                    Log.i(logTag, "run() : config LensDistortionNarrowFOV pinholeDistort");
+                    LensDistortionNarrowFOV pinholeDistort = new LensDistortionPinhole(pinholeModel);
+                    Log.i(logTag, "run() : config detector.setLensDistortion(pinholeDistort)");
+                    detector.setLensDistortion(pinholeDistort);  // TODO - do BoofCV calibration - but assume perfect pinhole camera for now
+
+                    // TODO - timing here  c[camera_num]-f[frameprocessed]
+                    long timeNow = Calendar.getInstance().getTimeInMillis();
+                    Log.i(logTag, "run() : start detector.detect(grayImage);");
+                    Log.i(logTag, "run() : start detector.detect(grayImage) at " + timeNow);
+                    detector.detect(grayImage);
+                    Log.i(logTag, "run() : after detector.detect(grayImage) in " + timeElapsed(timeNow) + "ms");
+                    Log.i(logTag, "run() : after detector.detect(grayImage) : time since start = " + timeElapsed(startTime) + "ms");
+                    Log.i(logTag, "run() : finished detector.detect(grayImage);");
+                    for (int i = 0; i < detector.totalFound(); i++) {
+                        timeNow = Calendar.getInstance().getTimeInMillis();
+                        if( detector.hasUniqueID() ) {
+                            long tag_id_long = detector.getId(i);
+                            Log.i(logTag, "run() : tag detection "+i+" after detector.getId("+i+") = "+tag_id_long+" in " + timeElapsed(timeNow) + "ms");
+                            Log.i(logTag, "run() : tag detection "+i+" after detector.getId("+i+") = "+tag_id_long+" in " + timeElapsed(startTime) + "ms");
+                        } else {
+                            Log.i(logTag, "run() : tag detection "+i+" has no id; detector.hasUniqueID() == false ");
+                        }
+                    }
+
+                    // end dummy image processing code - https://boofcv.org/index.php?title=Android_support
+//                output = new FileOutputStream(mFile);
+//                output.write(bytes);
+                } catch (IOException e) {
+                    e.printStackTrace();
+                } finally {
+//                mImage.close();
+//                if (null != output) {
+//                    try {
+//                        output.close();
+//                    } catch (IOException e) {
+//                        e.printStackTrace();
+//                    }
+//                }
+                }
+//            }
+            executionEndTimeMs = Calendar.getInstance().getTimeInMillis();
+            return new Long(0L);
+        }
+
+        @Override
+        protected void onPreExecute() {
+            super.onPreExecute();
+        }
+
+        @Override
+        protected void onProgressUpdate(Void... values) {
+            super.onProgressUpdate(values);
+        }
+
+        @Override
+        protected void onPostExecute(Long result) {
+            super.onPostExecute(result);
+            taskCompletionTimer.completedTask(executionThreadId, executionStartTimeMs, executionEndTimeMs);
         }
 
     }
