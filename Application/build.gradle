@@ -20,6 +20,14 @@ dependencies {
     compile "com.android.support:support-v13:25.3.1"
     compile "com.android.support:cardview-v7:25.3.1"
     compile "com.android.support:appcompat-v7:25.3.1"
+    ['android', 'core'].each { String a -> compile group: 'org.boofcv', name: a, version: 0.26 } // BoofCV: see https://boofcv.org/index.php?title=Android_support
+}
+
+// BoofCV: see https://boofcv.org/index.php?title=Android_support
+// Remove libraries that conflict with libraries already included with Android
+configurations {
+    all*.exclude group: "xmlpull", module: "xmlpull"
+    all*.exclude group: "org.apache.commons", module: "commons-compress"
 }
 
 // The sample build uses multiple directories to
@@ -32,7 +40,7 @@ List<String> dirs = [
 
 android {
     compileSdkVersion 25
-    buildToolsVersion "25.0.3"
+    buildToolsVersion "25.0.2"
 
     defaultConfig {
         minSdkVersion 21
