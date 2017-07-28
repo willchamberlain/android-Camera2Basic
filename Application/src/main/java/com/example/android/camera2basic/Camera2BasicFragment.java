@@ -142,12 +142,12 @@ public class Camera2BasicFragment extends Fragment
     /**
      * Max preview width that is guaranteed by Camera2 API
      */
-    private static final int MAX_PREVIEW_WIDTH = 1920;
+    private static final int MAX_PREVIEW_WIDTH = 640; //1920;
 
     /**
      * Max preview height that is guaranteed by Camera2 API
      */
-    private static final int MAX_PREVIEW_HEIGHT = 1080;
+    private static final int MAX_PREVIEW_HEIGHT = 480; //1080;
 
     /**
      * {@link TextureView.SurfaceTextureListener} handles several lifecycle events on a
@@ -462,8 +462,8 @@ public class Camera2BasicFragment extends Fragment
      * @param aspectRatio       The aspect ratio
      * @return The optimal {@code Size}, or an arbitrary one if none were big enough
      */
-    private static Size chooseOptimalSize(Size[] choices, int textureViewWidth,
-            int textureViewHeight, int maxWidth, int maxHeight, Size aspectRatio) {
+    private static Size chooseOptimalSizeForImage(Size[] choices, int textureViewWidth,
+                                                  int textureViewHeight, int maxWidth, int maxHeight, Size aspectRatio) {
 
         // Collect the supported resolutions that are at least as big as the preview Surface
         List<Size> bigEnough = new ArrayList<>();
@@ -496,6 +496,7 @@ public class Camera2BasicFragment extends Fragment
     }
 
     public static Camera2BasicFragment newInstance() {
+        Log.i("Camera2BasicFragment","newInstance(): start");
         return new Camera2BasicFragment();
     }
 
@@ -522,6 +523,8 @@ public class Camera2BasicFragment extends Fragment
     public void onResume() {
         super.onResume();
 
+        Log.i("Camera2BasicFragment","onResume(): start");
+
 
         startBackgroundThread();
         threadPoolExecutor.allowCoreThreadTimeOut(true);
@@ -542,6 +545,7 @@ public class Camera2BasicFragment extends Fragment
 
     @Override
     public void onPause() {
+        Log.i("Camera2BasicFragment","onPause(): start");
         closeCamera();
         stopBackgroundThread();
         super.onPause();
@@ -602,19 +606,7 @@ public class Camera2BasicFragment extends Fragment
                         Arrays.asList(map.getOutputSizes(ImageFormat.YUV_420_888)),         // TODO see https://stackoverflow.com/a/43564630/1200764
                         new CompareSizesByArea());
 
-                /* TODO - "the ImageReader class allows direct application access to image data rendered into a {@link android.view.Surface"
-                 */
-//                mImageReader = ImageReader.newInstance(largest.getWidth(), largest.getHeight(), // TODO see https://stackoverflow.com/a/43564630/1200764
-//                        ImageFormat.JPEG, /*maxImages*/2);                                      // TODO see https://stackoverflow.com/a/43564630/1200764
-                mImageReader = ImageReader.newInstance(largest.getWidth()/16, largest.getHeight()/16,
-                        ImageFormat.YUV_420_888, /*maxImages*/2);
 
-                /* TODO - this configures the image processing as a callback that is called whenever a frame is available
-                    - mOnImageAvailableListener is a  ImageReader.OnImageAvailableListener, which is called whenever mImageReader has a frame available to process
-                    - mBackgroundHandler is a Handler
-                 */
-                mImageReader.setOnImageAvailableListener(
-                        mOnImageAvailableListener, mBackgroundHandler);
 
                 // Find out if we need to swap dimension to get the preview size relative to sensor
                 // coordinate.
@@ -664,19 +656,45 @@ public class Camera2BasicFragment extends Fragment
                 // Danger, W.R.! Attempting to use too large a preview size could  exceed the camera
                 // bus' bandwidth limitation, resulting in gorgeous previews but the storage of
                 // garbage capture data.
-                mPreviewSize = chooseOptimalSize(map.getOutputSizes(SurfaceTexture.class),
+                mPreviewSize = chooseOptimalSizeForImage(map.getOutputSizes(SurfaceTexture.class),  // TODO - match the mImageReader = ImageReader.newInstance() to this preview size
                         rotatedPreviewWidth, rotatedPreviewHeight, maxPreviewWidth,
                         maxPreviewHeight, largest);
+//                mPreviewSize = chooseOptimalSizeForImage(map.getOutputSizes(SurfaceTexture.class),
+//                        rotatedPreviewWidth, rotatedPreviewHeight, 1000,
+//                        1000, largest);
+                Log.i(TAG, "setUpCameraOutputs(int "+width+", int "+height+"): mPreviewSize: "+mPreviewSize.getWidth()+"x"+mPreviewSize.getHeight());
+
+
+                /* TODO - "the ImageReader class allows direct application access to image data rendered into a {@link android.view.Surface"
+                 */
+//                mImageReader = ImageReader.newInstance(largest.getWidth(), largest.getHeight(), // TODO see https://stackoverflow.com/a/43564630/1200764
+//                        ImageFormat.JPEG, /*maxImages*/2);                                      // TODO see https://stackoverflow.com/a/43564630/1200764
+
+
+
 
                 // We fit the aspect ratio of TextureView to the size of preview we picked.
                 int orientation = getResources().getConfiguration().orientation;
                 if (orientation == Configuration.ORIENTATION_LANDSCAPE) {
                     mTextureView.setAspectRatio(
                             mPreviewSize.getWidth(), mPreviewSize.getHeight());
+                    mImageReader = ImageReader.newInstance(                     // TODO see https://stackoverflow.com/a/43564630/1200764
+                            mPreviewSize.getWidth(), mPreviewSize.getHeight(),  // TODO - this scaling is arbitrary; reduces the max width from 4160 to 240, so always get 320x240
+                            ImageFormat.YUV_420_888, /*maxImages*/2);
                 } else {
                     mTextureView.setAspectRatio(
                             mPreviewSize.getHeight(), mPreviewSize.getWidth());
+                    mImageReader = ImageReader.newInstance(                     // TODO see https://stackoverflow.com/a/43564630/1200764
+                            mPreviewSize.getHeight(), mPreviewSize.getWidth(),  // TODO - this scaling is arbitrary; reduces the max width from 4160 to 240, so always get 320x240
+                            ImageFormat.YUV_420_888, /*maxImages*/2);
                 }
+
+                /* TODO - this configures the image processing as a callback that is called whenever a frame is available
+                    - mOnImageAvailableListener is a  ImageReader.OnImageAvailableListener, which is called whenever mImageReader has a frame available to process
+                    - mBackgroundHandler is a Handler
+                 */
+                mImageReader.setOnImageAvailableListener(
+                        mOnImageAvailableListener, mBackgroundHandler);
 
                 // Check if the flash is supported.
                 Boolean available = characteristics.get(CameraCharacteristics.FLASH_INFO_AVAILABLE);
@@ -801,6 +819,7 @@ public class Camera2BasicFragment extends Fragment
      * Creates a new {@link CameraCaptureSession} for camera preview.
      */
     private void createCameraPreviewSession() {
+        Log.i("Camera2BasicFragment","createCameraPreviewSession(): start");
         try {
             SurfaceTexture texture = mTextureView.getSurfaceTexture();
             assert texture != null;
@@ -1091,9 +1110,10 @@ public class Camera2BasicFragment extends Fragment
                 Log.i("ImageSaver","run() : after converting nv21ToGray in "+timeElapsed(algorithmStepStartTime)+"ms");
 
                 // start try detecting tags in the frame
-                double BOOFCV_TAG_WIDTH=0.14;
+                double BOOFCV_TAG_WIDTH=0.14; // TODO - tag size is a parameter
                 int imageWidthInt = grayImage.getHeight(); // new Double(matGray.size().width).intValue();
-                int imageHeightInt = grayImage.getWidth(); //new Double(matGray.size().height).intValue();
+                int imageHeightInt = grayImage.getWidth(); //new Double(matGray.size().height).intValue();detect
+                Log.i("ImageSaver","run() : image dimensions: "+imageWidthInt+" pixels wide, "+imageHeightInt+" pixels high");
                 float imageWidthFloat =  (float)imageWidthInt; // new Double(matGray.size().width).intValue();
                 float imageHeightFloat = (float)imageHeightInt; //new Double(matGray.size().height).intValue();
                 float  focal_midpoint_pixels_x = imageWidthFloat/2.0f;
@@ -1102,6 +1122,7 @@ public class Camera2BasicFragment extends Fragment
                 double skew = 0.0;
 
                 // TODO - 640 is now a magic number : it is the image width in pixels at the time of calibration of focal length
+                // TODO - per-camera calibration using BoofCV calibration process
                 float focal_length_in_pixels_x = 519.902859f * (imageWidthFloat/640.0f);  // TODO - for Samsung Galaxy S3s from /mnt/nixbig/ownCloud/project_AA1__1_1/results/2016_12_04_callibrate_in_ROS/calibrationdata_grey/ost.txt
                 float focal_length_in_pixels_y = 518.952669f * (imageHeightFloat/480.0f);  // TODO - for Samsung Galaxy S3s from /mnt/nixbig/ownCloud/project_AA1__1_1/results/2016_12_04_callibrate_in_ROS/calibrationdata_grey/ost.txt
 
@@ -1265,6 +1286,7 @@ public class Camera2BasicFragment extends Fragment
             luminanceBuffer.get(luminanceBytes);                            // copy from buffer to bytes: get() "transfers bytes from this buffer into the given destination array"
             imageWidth = image.getWidth();
             imageHeight = image.getHeight();
+            Log.i("ImageSaverAsyncTask","ImageSaverAsyncTask(Image image): image dimensions: "+imageWidth+" pixels wide, "+imageHeight+" pixels high");
             taskCompletionTimer = taskCompletionTimer_;
             Log.i("ImageSaverAsyncTask","ImageSaverAsyncTask(Image image): end after "+timeElapsed(startTime)+"ms");
         }
@@ -1275,32 +1297,33 @@ public class Camera2BasicFragment extends Fragment
             String logTag = "ImgeSv_p="+executionThreadId;
 
                 long startTime = Calendar.getInstance().getTimeInMillis();
-                Log.i(logTag, "run(): start = " + startTime);
+                Log.i(logTag, "doInBackground(): start = " + startTime);
                 executionStartTimeMs = startTime;
                 taskCompletionTimer.incConcurrentThreadsExecuting();
                 try {
-                    Log.i(logTag, "run() : doing some work in the Try block: concurrentThreadsExecuting = "+taskCompletionTimer.concurrentThreadsExecuting());
-                    Log.i(logTag, "run() : doing some work in the Try block: Runtime.getRuntime().availableProcessors() = "+Runtime.getRuntime().availableProcessors());
+                    Log.i(logTag, "doInBackground() : doing some work in the Try block: concurrentThreadsExecuting = "+taskCompletionTimer.concurrentThreadsExecuting());
+                    Log.i(logTag, "doInBackground() : doing some work in the Try block: Runtime.getRuntime().availableProcessors() = "+Runtime.getRuntime().availableProcessors());
 
                     Random random = new Random();
                     if (1 == random.nextInt()) {
-                        Log.i(logTag, "run() : throwing an IOException at random while doing some work in the Try block");
-                        throw new IOException("No particular reason: ImageSaver.run() : throwing an IOException at random while doing some work in the Try block");
+                        Log.i(logTag, "doInBackground() : throwing an IOException at random while doing some work in the Try block");
+                        throw new IOException("No particular reason: ImageSaver.doInBackground() : throwing an IOException at random while doing some work in the Try block");
                     }
                     // dummy image processing code - https://boofcv.org/index.php?title=Android_support
                     long algorithmStepStartTime = 0L;
                     algorithmStepStartTime = Calendar.getInstance().getTimeInMillis();
                     GrayF32 grayImage = new GrayF32(imageWidth, imageHeight);
-                    Log.i(logTag, "run() : after constructing grayImage in " + timeElapsed(algorithmStepStartTime) + "ms");
+                    Log.i(logTag, "doInBackground() : after constructing grayImage in " + timeElapsed(algorithmStepStartTime) + "ms");
                     // from NV21 to gray scale
                     algorithmStepStartTime = Calendar.getInstance().getTimeInMillis();
                     ConvertNV21.nv21ToGray(luminanceBytes, imageWidth, imageHeight, grayImage);
-                    Log.i(logTag, "run() : after converting nv21ToGray in " + timeElapsed(algorithmStepStartTime) + "ms");
+                    Log.i(logTag, "doInBackground() : after converting nv21ToGray in " + timeElapsed(algorithmStepStartTime) + "ms");
 
                     // start try detecting tags in the frame
                     double BOOFCV_TAG_WIDTH = 0.14;
                     int imageWidthInt = grayImage.getHeight(); // new Double(matGray.size().width).intValue();
                     int imageHeightInt = grayImage.getWidth(); //new Double(matGray.size().height).intValue();
+                    Log.i(logTag,"doInBackground() : image dimensions: "+imageWidthInt+" pixels wide, "+imageHeightInt+" pixels high");
                     float imageWidthFloat = (float) imageWidthInt; // new Double(matGray.size().width).intValue();
                     float imageHeightFloat = (float) imageHeightInt; //new Double(matGray.size().height).intValue();
                     float focal_midpoint_pixels_x = imageWidthFloat / 2.0f;
@@ -1313,39 +1336,39 @@ public class Camera2BasicFragment extends Fragment
                     float focal_length_in_pixels_y = 518.952669f * (imageHeightFloat / 480.0f);  // TODO - for Samsung Galaxy S3s from /mnt/nixbig/ownCloud/project_AA1__1_1/results/2016_12_04_callibrate_in_ROS/calibrationdata_grey/ost.txt
 
 
-                    Log.i(logTag, "run() : config FactoryFiducial.squareBinary");
+                    Log.i(logTag, "doInBackground() : config FactoryFiducial.squareBinary");
                     FiducialDetector<GrayF32> detector = FactoryFiducial.squareBinary(
                             new ConfigFiducialBinary(BOOFCV_TAG_WIDTH),
                             ConfigThreshold.local(ThresholdType.LOCAL_SQUARE, 10),          // TODO - evaluate parameter - ?'radius'?
                             GrayF32.class);  // tag size,  type,  ?'radius'?
                     //        detector.setLensDistortion(lensDistortion);
-                    Log.i(logTag, "run() : config CameraPinhole pinholeModel");
+                    Log.i(logTag, "doInBackground() : config CameraPinhole pinholeModel");
                     CameraPinhole pinholeModel = new CameraPinhole(
                             focal_length_in_pixels_x, focal_length_in_pixels_y,
                             skew,
                             focal_midpoint_pixels_x, focal_midpoint_pixels_y,
                             imageWidthInt, imageHeightInt);
-                    Log.i(logTag, "run() : config LensDistortionNarrowFOV pinholeDistort");
+                    Log.i(logTag, "doInBackground() : config LensDistortionNarrowFOV pinholeDistort");
                     LensDistortionNarrowFOV pinholeDistort = new LensDistortionPinhole(pinholeModel);
-                    Log.i(logTag, "run() : config detector.setLensDistortion(pinholeDistort)");
+                    Log.i(logTag, "doInBackground() : config detector.setLensDistortion(pinholeDistort)");
                     detector.setLensDistortion(pinholeDistort);  // TODO - do BoofCV calibration - but assume perfect pinhole camera for now
 
                     // TODO - timing here  c[camera_num]-f[frameprocessed]
                     long timeNow = Calendar.getInstance().getTimeInMillis();
-                    Log.i(logTag, "run() : start detector.detect(grayImage);");
-                    Log.i(logTag, "run() : start detector.detect(grayImage) at " + timeNow);
+                    Log.i(logTag, "doInBackground() : start detector.detect(grayImage);");
+                    Log.i(logTag, "doInBackground() : start detector.detect(grayImage) at " + timeNow);
                     detector.detect(grayImage);
-                    Log.i(logTag, "run() : after detector.detect(grayImage) in " + timeElapsed(timeNow) + "ms");
-                    Log.i(logTag, "run() : after detector.detect(grayImage) : time since start = " + timeElapsed(startTime) + "ms");
-                    Log.i(logTag, "run() : finished detector.detect(grayImage);");
+                    Log.i(logTag, "doInBackground() : after detector.detect(grayImage) in " + timeElapsed(timeNow) + "ms");
+                    Log.i(logTag, "doInBackground() : after detector.detect(grayImage) : time since start = " + timeElapsed(startTime) + "ms");
+                    Log.i(logTag, "doInBackground() : finished detector.detect(grayImage);");
                     for (int i = 0; i < detector.totalFound(); i++) {
                         timeNow = Calendar.getInstance().getTimeInMillis();
                         if( detector.hasUniqueID() ) {
                             long tag_id_long = detector.getId(i);
-                            Log.i(logTag, "run() : tag detection "+i+" after detector.getId("+i+") = "+tag_id_long+" in " + timeElapsed(timeNow) + "ms");
-                            Log.i(logTag, "run() : tag detection "+i+" after detector.getId("+i+") = "+tag_id_long+" in " + timeElapsed(startTime) + "ms from start");
+                            Log.i(logTag, "doInBackground() : tag detection "+i+" after detector.getId("+i+") = "+tag_id_long+" in " + timeElapsed(timeNow) + "ms");
+                            Log.i(logTag, "doInBackground() : tag detection "+i+" after detector.getId("+i+") = "+tag_id_long+" in " + timeElapsed(startTime) + "ms from start");
                         } else {
-                            Log.i(logTag, "run() : tag detection "+i+" has no id; detector.hasUniqueID() == false ");
+                            Log.i(logTag, "doInBackground() : tag detection "+i+" has no id; detector.hasUniqueID() == false ");
                         }
                     }
                 } catch (IOException e) {
