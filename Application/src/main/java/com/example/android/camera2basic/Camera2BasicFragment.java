@@ -180,7 +180,7 @@ public class Camera2BasicFragment extends Fragment
     /**
      * ID of the current {@link CameraDevice}.
      */
-    private String mCameraId;
+    private String cameraId;
 
     /**
      * An {@link AutoFitTextureView} for camera preview.
@@ -200,7 +200,8 @@ public class Camera2BasicFragment extends Fragment
     /**
      * The {@link android.util.Size} of camera preview.
      */
-    private Size mPreviewSize;
+    private Size imageSize;
+
 
     /**
      * {@link CameraDevice.StateCallback} is called when {@link CameraDevice} changes its state.
@@ -244,7 +245,7 @@ public class Camera2BasicFragment extends Fragment
     /**
      * A {@link Handler} for running tasks in the background.
      */
-    private Handler mBackgroundHandler;
+    private Handler backgroundHandler;
     private Handler mBackgroundHandler2;
 
     /**
@@ -267,7 +268,7 @@ public class Camera2BasicFragment extends Fragment
      * TODO Do the image processing - this a callback object for the {@link ImageReader}. "onImageAvailable" will be called when a
      * still image is ready to be saved.
      */
-    private final ImageReader.OnImageAvailableListener mOnImageAvailableListener
+    private final ImageReader.OnImageAvailableListener onImageAvailableListener
             = new ImageReader.OnImageAvailableListener() {
         final int RUN_ASYNC_BACKGROUNDHANDLER =  10;
         final int RUN_ASYNC_ASYNCTASK =         20;
@@ -279,8 +280,8 @@ public class Camera2BasicFragment extends Fragment
             frameNum++;  if (frameNum == Long.MAX_VALUE) { frameNum=1; }
             switch (RUN_ASYNC_METHOD) {
                 case RUN_ASYNC_BACKGROUNDHANDLER: {
-                    if (null != mBackgroundHandler) {
-                        mBackgroundHandler.post(
+                    if (null != backgroundHandler) {
+                        backgroundHandler.post(
                                 new ImageSaver(
                                         image /*,                          // TODO see https://stackoverflow.com/a/43564630/1200764
                                 mFile */ ));  // push ImageSaver runnable/task onto the backgroundthread's message queue to be executed on the backgroundthread
@@ -583,124 +584,72 @@ public class Camera2BasicFragment extends Fragment
         Activity activity = getActivity();
         CameraManager manager = (CameraManager) activity.getSystemService(Context.CAMERA_SERVICE);
         try {
-            listCameraCharacteristics(manager);
-            for (String cameraId : manager.getCameraIdList()) {
-                CameraCharacteristics characteristics
-                        = manager.getCameraCharacteristics(cameraId);
+            logCameraCharacteristics(manager);
+            for (String cameraId_ : manager.getCameraIdList()) {
+                CameraCharacteristics cameraDetails = manager.getCameraCharacteristics(cameraId_);
 
-                // We don't use a front facing camera in this sample.
-                Integer facing = characteristics.get(CameraCharacteristics.LENS_FACING);
-                if (facing != null && facing == CameraCharacteristics.LENS_FACING_FRONT) {
-                    continue;
-                }
+                if(isFrontFacingCameraId(cameraDetails)) { continue; } // We don't use a front facing camera in this sample.
 
-                StreamConfigurationMap map = characteristics.get(
-                        CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP);
-                if (map == null) {
-                    continue;
-                }
+                StreamConfigurationMap map = cameraDetails.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP);
+                if (map == null) { continue; }
 
                 // For still image captures, we use the largest available size.
                 Size largest = Collections.max(
-//                        Arrays.asList(map.getOutputSizes(ImageFormat.JPEG)),              // TODO see https://stackoverflow.com/a/43564630/1200764
-                        Arrays.asList(map.getOutputSizes(ImageFormat.YUV_420_888)),         // TODO see https://stackoverflow.com/a/43564630/1200764
+                        Arrays.asList(map.getOutputSizes(ImageFormat.YUV_420_888 /*ImageFormat.JPEG*/ )),         // TODO see https://stackoverflow.com/a/43564630/1200764
                         new CompareSizesByArea());
 
 
 
-                // Find out if we need to swap dimension to get the preview size relative to sensor
-                // coordinate.
+                // Find out if we need to swap dimension to get the preview size relative to sensor  coordinate.
                 int displayRotation = activity.getWindowManager().getDefaultDisplay().getRotation();
                 //noinspection ConstantConditions
-                mSensorOrientation = characteristics.get(CameraCharacteristics.SENSOR_ORIENTATION);
+                mSensorOrientation = cameraDetails.get(CameraCharacteristics.SENSOR_ORIENTATION);
+
+                Point displaySize = new Point();
+                activity.getWindowManager().getDefaultDisplay().getSize(displaySize);
+                int rotatedPreviewWidth = width;         int rotatedPreviewHeight = height;
+                int maxPreviewWidth     = displaySize.x; int maxPreviewHeight     = displaySize.y;
                 boolean swappedDimensions = false;
                 switch (displayRotation) {
-                    case Surface.ROTATION_0:
-                    case Surface.ROTATION_180:
-                        if (mSensorOrientation == 90 || mSensorOrientation == 270) {
-                            swappedDimensions = true;
-                        }
+                    case Surface.ROTATION_0: case Surface.ROTATION_180:
+                        if (mSensorOrientation == 90 || mSensorOrientation == 270) { swappedDimensions = true; }
                         break;
-                    case Surface.ROTATION_90:
-                    case Surface.ROTATION_270:
-                        if (mSensorOrientation == 0 || mSensorOrientation == 180) {
-                            swappedDimensions = true;
-                        }
+                    case Surface.ROTATION_90: case Surface.ROTATION_270:
+                        if (mSensorOrientation == 0 || mSensorOrientation == 180) { swappedDimensions = true; }
                         break;
                     default:
                         Log.e(TAG, "Display rotation is invalid: " + displayRotation);
                 }
-
-                Point displaySize = new Point();
-                activity.getWindowManager().getDefaultDisplay().getSize(displaySize);
-                int rotatedPreviewWidth = width;
-                int rotatedPreviewHeight = height;
-                int maxPreviewWidth = displaySize.x;
-                int maxPreviewHeight = displaySize.y;
-
                 if (swappedDimensions) {
-                    rotatedPreviewWidth = height;
-                    rotatedPreviewHeight = width;
-                    maxPreviewWidth = displaySize.y;
-                    maxPreviewHeight = displaySize.x;
+                    rotatedPreviewWidth = height;         rotatedPreviewHeight = width;
+                    maxPreviewWidth     = displaySize.y;  maxPreviewHeight     = displaySize.x;
                 }
-
-                if (maxPreviewWidth > MAX_PREVIEW_WIDTH) {
-                    maxPreviewWidth = MAX_PREVIEW_WIDTH;
-                }
-
-                if (maxPreviewHeight > MAX_PREVIEW_HEIGHT) {
-                    maxPreviewHeight = MAX_PREVIEW_HEIGHT;
-                }
+                if (maxPreviewWidth > MAX_PREVIEW_WIDTH) { maxPreviewWidth = MAX_PREVIEW_WIDTH; }
+                if (maxPreviewHeight > MAX_PREVIEW_HEIGHT) { maxPreviewHeight = MAX_PREVIEW_HEIGHT; }
 
                 // Danger, W.R.! Attempting to use too large a preview size could  exceed the camera
                 // bus' bandwidth limitation, resulting in gorgeous previews but the storage of
                 // garbage capture data.
-                mPreviewSize = chooseOptimalSizeForImage(map.getOutputSizes(SurfaceTexture.class),  // TODO - match the mImageReader = ImageReader.newInstance() to this preview size
-                        rotatedPreviewWidth, rotatedPreviewHeight, maxPreviewWidth,
-                        maxPreviewHeight, largest);
-//                mPreviewSize = chooseOptimalSizeForImage(map.getOutputSizes(SurfaceTexture.class),
-//                        rotatedPreviewWidth, rotatedPreviewHeight, 1000,
-//                        1000, largest);
-                Log.i(TAG, "setUpCameraOutputs(int "+width+", int "+height+"): mPreviewSize: "+mPreviewSize.getWidth()+"x"+mPreviewSize.getHeight());
-
-
-                /* TODO - "the ImageReader class allows direct application access to image data rendered into a {@link android.view.Surface"
-                 */
-//                mImageReader = ImageReader.newInstance(largest.getWidth(), largest.getHeight(), // TODO see https://stackoverflow.com/a/43564630/1200764
-//                        ImageFormat.JPEG, /*maxImages*/2);                                      // TODO see https://stackoverflow.com/a/43564630/1200764
-
-
-
-
-                // We fit the aspect ratio of TextureView to the size of preview we picked.
-                int orientation = getResources().getConfiguration().orientation;
-                if (orientation == Configuration.ORIENTATION_LANDSCAPE) {
-                    mTextureView.setAspectRatio(
-                            mPreviewSize.getWidth(), mPreviewSize.getHeight());
-                    mImageReader = ImageReader.newInstance(                     // TODO see https://stackoverflow.com/a/43564630/1200764
-                            mPreviewSize.getWidth(), mPreviewSize.getHeight(),  // TODO - this scaling is arbitrary; reduces the max width from 4160 to 240, so always get 320x240
-                            ImageFormat.YUV_420_888, /*maxImages*/2);
+                imageSize = chooseOptimalSizeForImage(map.getOutputSizes(SurfaceTexture.class),  // TODO - match the mImageReader = ImageReader.newInstance() to this preview size
+                        rotatedPreviewWidth, rotatedPreviewHeight, 
+                        maxPreviewWidth, maxPreviewHeight, largest);
+                    Log.i(TAG, "setUpCameraOutputs(int "+width+", int "+height+"): mPreviewSize: "+imageSize.getWidth()+"x"+imageSize.getHeight());
+                    /* TODO - "the ImageReader class allows direct application access to image data rendered into a {@link android.view.Surface"*/
+                if (getResources().getConfiguration().orientation == Configuration.ORIENTATION_LANDSCAPE) {
+                    mTextureView.setAspectRatio(imageSize.getWidth(), imageSize.getHeight());           // Fit the aspect ratio of TextureView to the size of preview.
+                    mImageReader = ImageReader.newInstance( imageSize.getWidth(), imageSize.getHeight(), ImageFormat.YUV_420_888, 2 /*maxImages*/ ); // TODO see https://stackoverflow.com/a/43564630/1200764 - this scaling is arbitrary; reduces the max width from 4160 to 240, so always get 320x240
                 } else {
-                    mTextureView.setAspectRatio(
-                            mPreviewSize.getHeight(), mPreviewSize.getWidth());
-                    mImageReader = ImageReader.newInstance(                     // TODO see https://stackoverflow.com/a/43564630/1200764
-                            mPreviewSize.getHeight(), mPreviewSize.getWidth(),  // TODO - this scaling is arbitrary; reduces the max width from 4160 to 240, so always get 320x240
-                            ImageFormat.YUV_420_888, /*maxImages*/2);
+                    mTextureView.setAspectRatio(imageSize.getHeight(), imageSize.getWidth());
+                    mImageReader = ImageReader.newInstance( imageSize.getHeight(), imageSize.getWidth(), ImageFormat.YUV_420_888, 2 /*maxImages*/ ); // TODO see https://stackoverflow.com/a/43564630/1200764 - this scaling is arbitrary; reduces the max width from 4160 to 240, so always get 320x240
                 }
 
                 /* TODO - this configures the image processing as a callback that is called whenever a frame is available
-                    - mOnImageAvailableListener is a  ImageReader.OnImageAvailableListener, which is called whenever mImageReader has a frame available to process
-                    - mBackgroundHandler is a Handler
+                    - onImageAvailableListener is a  ImageReader.OnImageAvailableListener, which is called whenever mImageReader has a frame available to process
+                    - backgroundHandler is a Handler
                  */
-                mImageReader.setOnImageAvailableListener(
-                        mOnImageAvailableListener, mBackgroundHandler);
-
-                // Check if the flash is supported.
-                Boolean available = characteristics.get(CameraCharacteristics.FLASH_INFO_AVAILABLE);
-                mFlashSupported = available == null ? false : available;
-
-                mCameraId = cameraId;
+                mImageReader.setOnImageAvailableListener(onImageAvailableListener, backgroundHandler);
+                boolean flashSupported = isFlashSupported(cameraDetails);
+                cameraId = cameraId_;
                 return;
             }
         } catch (CameraAccessException e) {
@@ -713,8 +662,23 @@ public class Camera2BasicFragment extends Fragment
         }
     }
 
+    private boolean isFlashSupported(CameraCharacteristics cameraDetails) {
+        // Check if the flash is supported.
+        Boolean available = cameraDetails.get(CameraCharacteristics.FLASH_INFO_AVAILABLE);
+        return available == null ? false : available;
+    }
+
+    private boolean isFrontFacingCameraId(CameraCharacteristics characteristics) {
+        Integer facing = characteristics.get(CameraCharacteristics.LENS_FACING);
+        boolean frontFacingCameraId = false;
+        if (facing != null && facing == CameraCharacteristics.LENS_FACING_FRONT) {
+            frontFacingCameraId = true;
+        }
+        return frontFacingCameraId;
+    }
+
     /**
-     * Opens the camera specified by {@link Camera2BasicFragment#mCameraId}.
+     * Opens the camera specified by {@link Camera2BasicFragment#cameraId}.
      */
     private void openCamera(int width, int height) {
         if (ContextCompat.checkSelfPermission(getActivity(), Manifest.permission.CAMERA)
@@ -730,8 +694,8 @@ public class Camera2BasicFragment extends Fragment
             if (!mCameraOpenCloseLock.tryAcquire(2500, TimeUnit.MILLISECONDS)) {
                 throw new RuntimeException("Time out waiting to lock camera opening.");
             }
-            manager.openCamera(mCameraId, mStateCallback, mBackgroundHandler);
-            listCameraCharacteristics(manager);
+            manager.openCamera(cameraId, mStateCallback, backgroundHandler);
+            logCameraCharacteristics(manager);
         } catch (CameraAccessException e) {
             e.printStackTrace();
         } catch (InterruptedException e) {
@@ -739,7 +703,7 @@ public class Camera2BasicFragment extends Fragment
         }
     }
 
-    private void listCameraCharacteristics(CameraManager manager) throws CameraAccessException {
+    private void logCameraCharacteristics(CameraManager manager) throws CameraAccessException {
         String[] cameras = manager.getCameraIdList();
         for(String camera : cameras) {
             CameraCharacteristics cc = manager.getCameraCharacteristics(camera);
@@ -786,7 +750,7 @@ public class Camera2BasicFragment extends Fragment
     private void startBackgroundThread() {
         mBackgroundThread = new HandlerThread("CameraBackground");
         mBackgroundThread.start();
-        mBackgroundHandler = new Handler(mBackgroundThread.getLooper());
+        backgroundHandler = new Handler(mBackgroundThread.getLooper());
         mBackgroundThread2 = new HandlerThread("CameraBackground2");
         mBackgroundThread2.start();
         mBackgroundHandler2 = new Handler(mBackgroundThread2.getLooper());
@@ -800,7 +764,7 @@ public class Camera2BasicFragment extends Fragment
         try {
             mBackgroundThread.join();
             mBackgroundThread = null;
-            mBackgroundHandler = null;
+            backgroundHandler = null;
         } catch (InterruptedException e) {
             e.printStackTrace();
         }
@@ -825,7 +789,7 @@ public class Camera2BasicFragment extends Fragment
             assert texture != null;
 
             // We configure the size of default buffer to be the size of camera preview we want.
-            texture.setDefaultBufferSize(mPreviewSize.getWidth(), mPreviewSize.getHeight());
+            texture.setDefaultBufferSize(imageSize.getWidth(), imageSize.getHeight());
 
             // This is the output Surface we need to start preview.
             Surface surface = new Surface(texture);
@@ -861,7 +825,7 @@ public class Camera2BasicFragment extends Fragment
                                 // Finally, we start displaying the camera preview.
                                 mPreviewRequest = mPreviewRequestBuilder.build();
                                 mCaptureSession.setRepeatingRequest(mPreviewRequest,
-                                        mCaptureCallback, mBackgroundHandler);
+                                        mCaptureCallback, backgroundHandler);
                             } catch (CameraAccessException e) {
                                 e.printStackTrace();
                             }
@@ -889,21 +853,21 @@ public class Camera2BasicFragment extends Fragment
      */
     private void configureTransform(int viewWidth, int viewHeight) {
         Activity activity = getActivity();
-        if (null == mTextureView || null == mPreviewSize || null == activity) {
+        if (null == mTextureView || null == imageSize || null == activity) {
             return;
         }
         int rotation = activity.getWindowManager().getDefaultDisplay().getRotation();
         Matrix matrix = new Matrix();
         RectF viewRect = new RectF(0, 0, viewWidth, viewHeight);
-        RectF bufferRect = new RectF(0, 0, mPreviewSize.getHeight(), mPreviewSize.getWidth());
+        RectF bufferRect = new RectF(0, 0, imageSize.getHeight(), imageSize.getWidth());
         float centerX = viewRect.centerX();
         float centerY = viewRect.centerY();
         if (Surface.ROTATION_90 == rotation || Surface.ROTATION_270 == rotation) {
             bufferRect.offset(centerX - bufferRect.centerX(), centerY - bufferRect.centerY());
             matrix.setRectToRect(viewRect, bufferRect, Matrix.ScaleToFit.FILL);
             float scale = Math.max(
-                    (float) viewHeight / mPreviewSize.getHeight(),
-                    (float) viewWidth / mPreviewSize.getWidth());
+                    (float) viewHeight / imageSize.getHeight(),
+                    (float) viewWidth / imageSize.getWidth());
             matrix.postScale(scale, scale, centerX, centerY);
             matrix.postRotate(90 * (rotation - 2), centerX, centerY);
         } else if (Surface.ROTATION_180 == rotation) {
@@ -931,7 +895,7 @@ public class Camera2BasicFragment extends Fragment
             // Tell #mCaptureCallback to wait for the lock.
             mState = STATE_WAITING_FOR_FOCUS_LOCK;
             mCaptureSession.capture(mPreviewRequestBuilder.build(), mCaptureCallback,
-                    mBackgroundHandler);
+                    backgroundHandler);
         } catch (CameraAccessException e) {
             e.printStackTrace();
         }
@@ -950,7 +914,7 @@ public class Camera2BasicFragment extends Fragment
             // Tell #mCaptureCallback to wait for the precapture sequence to be set.
             mState = STATE_WAITING_FOR_EXPOSURE_TO_BE_PRECAPTURE;
             mCaptureSession.capture(mPreviewRequestBuilder.build(), mCaptureCallback,
-                    mBackgroundHandler);
+                    backgroundHandler);
         } catch (CameraAccessException e) {
             e.printStackTrace();
         }
@@ -1027,11 +991,11 @@ public class Camera2BasicFragment extends Fragment
             mPreviewRequestBuilder.set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, FIFTEEN_FPS);
             setAutoFlash(mPreviewRequestBuilder);
             mCaptureSession.capture(mPreviewRequestBuilder.build(), mCaptureCallback,
-                    mBackgroundHandler);
+                    backgroundHandler);
             // After this, the camera will go back to the normal state of preview.
             mState = STATE_SHOWING_CAMERA_PREVIEW;
             mCaptureSession.setRepeatingRequest(mPreviewRequest, mCaptureCallback,
-                    mBackgroundHandler);
+                    backgroundHandler);
         } catch (CameraAccessException e) {
             e.printStackTrace();
         }
