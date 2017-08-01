@@ -101,6 +101,9 @@ public class Camera2BasicFragment extends Fragment
     private static final SparseIntArray ORIENTATIONS = new SparseIntArray();
     private static final int REQUEST_CAMERA_PERMISSION = 1;
     private static final String FRAGMENT_DIALOG = "dialog";
+    public static final Range<Integer> FPS_FIFTEEN_FIFTEEN = new Range<>(15, 15);
+    public static final Range<Integer> FPS_SEVEN_SEVEN = new Range<>(7, 7);
+    public static final Range<Integer> FPS_FIVE_FIVE = new Range<>(5, 5);
 
     static {
         ORIENTATIONS.append(Surface.ROTATION_0, 90);
@@ -386,7 +389,7 @@ public class Camera2BasicFragment extends Fragment
                             mState = STATE_PICTURE_TAKEN;
                             captureStillPicture();
                         } else {
-                            runPrecaptureSequence();
+                            runPrecaptureSequenceAndCaptureImage();
                         }
                     }
                     break;
@@ -704,19 +707,28 @@ public class Camera2BasicFragment extends Fragment
     }
 
     private void logCameraCharacteristics(CameraManager manager) throws CameraAccessException {
+            Log.i(TAG,"logCameraCharacteristics: start");
         String[] cameras = manager.getCameraIdList();
         for(String camera : cameras) {
             CameraCharacteristics cc = manager.getCameraCharacteristics(camera);
             CameraCharacteristics.Key<int[]> aa = cc.REQUEST_AVAILABLE_CAPABILITIES;
             for (int i = 0; i < cc.get(CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES).length; i++) {
-                Log.e(TAG, "Capability: " + cc.get(CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES)[i]);
+                Log.i(TAG, "logCameraCharacteristics: camera="+camera+" available capability id= " + cc.get(CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES)[i]);
             }
         }
         for(String camera : cameras) {
             CameraCharacteristics cc = manager.getCameraCharacteristics(camera);
             Range<Integer>[] fpsRange = cc.get(cc.CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES);
-            Log.e(TAG, "fpsRange: [" + fpsRange[0] + "," + fpsRange[1] + "]");
+                Log.i(TAG, "logCameraCharacteristics: camera="+camera+" CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES fpsRange= [" + fpsRange[0] + "," + fpsRange[1] + "]");
+            StreamConfigurationMap map = manager.getCameraCharacteristics(camera).get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP);
+            if(null != map) {
+                fpsRange = map.getHighSpeedVideoFpsRanges(); // this range intends available fps range of device's camera.
+                Log.i(TAG, "logCameraCharacteristics: camera=" + camera + " StreamConfigurationMap getHighSpeedVideoFpsRanges fpsRange=" + fpsRange.toString());
+                try {   Log.i(TAG, "logCameraCharacteristics: camera="+camera+" StreamConfigurationMap getHighSpeedVideoFpsRanges fpsRange= [" + fpsRange[0] + "," + fpsRange[1] + "]"); }
+                catch(Exception e) {Log.i(TAG, "logCameraCharacteristics: camera="+camera+" StreamConfigurationMap getHighSpeedVideoFpsRanges : exception getting fpsRange="+e);}
+            }
         }
+            Log.i(TAG,"logCameraCharacteristics: end");
     }
 
     /**
@@ -783,27 +795,25 @@ public class Camera2BasicFragment extends Fragment
      * Creates a new {@link CameraCaptureSession} for camera preview.
      */
     private void createCameraPreviewSession() {
-        Log.i("Camera2BasicFragment","createCameraPreviewSession(): start");
+            Log.i("Camera2BasicFragment","createCameraPreviewSession(): start");
         try {
-            SurfaceTexture texture = mTextureView.getSurfaceTexture();
-            assert texture != null;
+            SurfaceTexture previewTexture = mTextureView.getSurfaceTexture();
+            assert previewTexture != null;
 
             // We configure the size of default buffer to be the size of camera preview we want.
-            texture.setDefaultBufferSize(imageSize.getWidth(), imageSize.getHeight());
+            previewTexture.setDefaultBufferSize(imageSize.getWidth(), imageSize.getHeight());
 
             // This is the output Surface we need to start preview.
-            Surface surface = new Surface(texture);
+            Surface previewDisplaySurface = new Surface(previewTexture);
 
             // We set up a CaptureRequest.Builder with the output Surface.
-            mPreviewRequestBuilder
-                    = mCameraDevice.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW);
-            mPreviewRequestBuilder.addTarget(surface);
-
-            Surface mImageSurface = mImageReader.getSurface();          // TODO see https://stackoverflow.com/a/43564630/1200764
-            mPreviewRequestBuilder.addTarget(mImageSurface);            // TODO see https://stackoverflow.com/a/43564630/1200764
+            Log.i("Camera2BasicFragment","createCameraPreviewSession(): for mCameraDevice.getId()="+mCameraDevice.getId());
+            mPreviewRequestBuilder = mCameraDevice.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW);
+            mPreviewRequestBuilder.addTarget(previewDisplaySurface);
+            mPreviewRequestBuilder.addTarget(mImageReader.getSurface());            // TODO see https://stackoverflow.com/a/43564630/1200764
 
             // Here, we create a CameraCaptureSession for camera preview.
-            mCameraDevice.createCaptureSession(Arrays.asList(surface, mImageReader.getSurface()),
+            mCameraDevice.createCaptureSession(Arrays.asList(previewDisplaySurface, mImageReader.getSurface()),
                     new CameraCaptureSession.StateCallback() {
 
                         @Override
@@ -812,20 +822,20 @@ public class Camera2BasicFragment extends Fragment
                             if (null == mCameraDevice) {
                                 return;
                             }
-
                             // When the session is ready, we start displaying the preview.
                             mCaptureSession = cameraCaptureSession;
                             try {
-                                // Auto focus should be continuous for camera preview.
-                                mPreviewRequestBuilder.set(CaptureRequest.CONTROL_AF_MODE,
+                                mPreviewRequestBuilder.set( // Auto focus should be continuous for camera preview.
+                                        CaptureRequest.CONTROL_AF_MODE,
                                         CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE);
-                                // Flash is automatically enabled when necessary.
-                                setAutoFlash(mPreviewRequestBuilder);
 
-                                // Finally, we start displaying the camera preview.
-                                mPreviewRequest = mPreviewRequestBuilder.build();
-                                mCaptureSession.setRepeatingRequest(mPreviewRequest,
-                                        mCaptureCallback, backgroundHandler);
+                                setAutoexposureToTargetRangeOfFPS(FPS_FIVE_FIVE);
+                                setAutoFlash(mPreviewRequestBuilder); // Flash is automatically enabled when necessary.
+                                mPreviewRequest = mPreviewRequestBuilder.build(); // Finally, we start displaying the camera preview.
+                                mCaptureSession.setRepeatingRequest(
+                                        mPreviewRequest,
+                                        mCaptureCallback,
+                                        backgroundHandler);
                             } catch (CameraAccessException e) {
                                 e.printStackTrace();
                             }
@@ -834,7 +844,7 @@ public class Camera2BasicFragment extends Fragment
                         @Override
                         public void onConfigureFailed(
                                 @NonNull CameraCaptureSession cameraCaptureSession) {
-                            showToast("Failed");
+                            showToast("Cofiguration process failed");   // output to screen
                         }
                     }, null
             );
@@ -864,7 +874,7 @@ public class Camera2BasicFragment extends Fragment
         float centerY = viewRect.centerY();
         if (Surface.ROTATION_90 == rotation || Surface.ROTATION_270 == rotation) {
             bufferRect.offset(centerX - bufferRect.centerX(), centerY - bufferRect.centerY());
-            matrix.setRectToRect(viewRect, bufferRect, Matrix.ScaleToFit.FILL);
+            matrix.setRectToRect(viewRect, bufferRect, Matrix.ScaleToFit.FILL);  // Set the matrix to the scale and translate values that map the source rectangle to the destination rectangle
             float scale = Math.max(
                     (float) viewHeight / imageSize.getHeight(),
                     (float) viewWidth / imageSize.getWidth());
@@ -881,20 +891,23 @@ public class Camera2BasicFragment extends Fragment
      */
     private void takePicture() {
         Log.i("Camera2BasicFragment","takePicture()");
-        lockFocus();
+        lockFocusAndCaptureImage();
     }
 
     /**
      * Lock the focus as the first step for a still image capture.
      */
-    private void lockFocus() {
+    private void lockFocusAndCaptureImage() {
         try {
             // This is how to tell the camera to lock focus.
-            mPreviewRequestBuilder.set(CaptureRequest.CONTROL_AF_TRIGGER,
+            mPreviewRequestBuilder.set(
+                    CaptureRequest.CONTROL_AF_TRIGGER,
                     CameraMetadata.CONTROL_AF_TRIGGER_START);
             // Tell #mCaptureCallback to wait for the lock.
             mState = STATE_WAITING_FOR_FOCUS_LOCK;
-            mCaptureSession.capture(mPreviewRequestBuilder.build(), mCaptureCallback,
+            mCaptureSession.capture(
+                    mPreviewRequestBuilder.build(),
+                    mCaptureCallback,
                     backgroundHandler);
         } catch (CameraAccessException e) {
             e.printStackTrace();
@@ -903,17 +916,20 @@ public class Camera2BasicFragment extends Fragment
 
     /**
      * Run the precapture sequence for capturing a still image. This method should be called when
-     * we get a response in {@link #mCaptureCallback} from {@link #lockFocus()}.
+     * we get a response in {@link #mCaptureCallback} from {@link #lockFocusAndCaptureImage()}.
      */
-    private void runPrecaptureSequence() {
-        Log.i("Camera2BasicFragment","runPrecaptureSequence()");
+    private void runPrecaptureSequenceAndCaptureImage() {
+        Log.i("Camera2BasicFragment","runPrecaptureSequenceAndCaptureImage()");
         try {
             // This is how to tell the camera to trigger.
-            mPreviewRequestBuilder.set(CaptureRequest.CONTROL_AE_PRECAPTURE_TRIGGER,
+            mPreviewRequestBuilder.set(
+                    CaptureRequest.CONTROL_AE_PRECAPTURE_TRIGGER,
                     CaptureRequest.CONTROL_AE_PRECAPTURE_TRIGGER_START);
             // Tell #mCaptureCallback to wait for the precapture sequence to be set.
             mState = STATE_WAITING_FOR_EXPOSURE_TO_BE_PRECAPTURE;
-            mCaptureSession.capture(mPreviewRequestBuilder.build(), mCaptureCallback,
+            mCaptureSession.capture(
+                    mPreviewRequestBuilder.build(),
+                    mCaptureCallback,
                     backgroundHandler);
         } catch (CameraAccessException e) {
             e.printStackTrace();
@@ -922,7 +938,7 @@ public class Camera2BasicFragment extends Fragment
 
     /**
      * Capture a still picture. This method should be called when we get a response in
-     * {@link #mCaptureCallback} from both {@link #lockFocus()}.
+     * {@link #mCaptureCallback} from both {@link #lockFocusAndCaptureImage()}.
      */
     private void captureStillPicture() {
         try {
@@ -936,7 +952,8 @@ public class Camera2BasicFragment extends Fragment
             captureBuilder.addTarget(mImageReader.getSurface());
 
             // Use the same AE and AF modes as the preview.
-            captureBuilder.set(CaptureRequest.CONTROL_AF_MODE,
+            captureBuilder.set(
+                    CaptureRequest.CONTROL_AF_MODE,
                     CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE);
             setAutoFlash(captureBuilder);
 
@@ -953,7 +970,7 @@ public class Camera2BasicFragment extends Fragment
                                                @NonNull TotalCaptureResult result) {
                     showToast("Saved: " + mFile);
                     Log.d(TAG, mFile.toString());
-                    unlockFocus();
+                    unlockFocusAndReturnToPreview();
                 }
             };
 
@@ -982,23 +999,39 @@ public class Camera2BasicFragment extends Fragment
      * Unlock the focus. This method should be called when still image capture sequence is
      * finished.
      */
-    private void unlockFocus() {
+    private void unlockFocusAndReturnToPreview() {
         try {
             // Reset the auto-focus trigger
-            mPreviewRequestBuilder.set(CaptureRequest.CONTROL_AF_TRIGGER,
-                    CameraMetadata.CONTROL_AF_TRIGGER_CANCEL);
-            final Range<Integer> FIFTEEN_FPS = new Range<Integer>(15,15);
-            mPreviewRequestBuilder.set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, FIFTEEN_FPS);
+            cancelAnyCurrentlyActiveAutofocusTrigger();
+            setAutoexposureToTargetRangeOfFPS(FPS_FIVE_FIVE);
+
             setAutoFlash(mPreviewRequestBuilder);
-            mCaptureSession.capture(mPreviewRequestBuilder.build(), mCaptureCallback,
+            mCaptureSession.capture(
+                    mPreviewRequestBuilder.build(),
+                    mCaptureCallback,
                     backgroundHandler);
-            // After this, the camera will go back to the normal state of preview.
+
+            // Return the camera to the 'normal' state of preview.
             mState = STATE_SHOWING_CAMERA_PREVIEW;
-            mCaptureSession.setRepeatingRequest(mPreviewRequest, mCaptureCallback,
+            mCaptureSession.setRepeatingRequest(
+                    mPreviewRequest,
+                    mCaptureCallback,
                     backgroundHandler);
         } catch (CameraAccessException e) {
             e.printStackTrace();
         }
+    }
+
+    private void setAutoexposureToTargetRangeOfFPS(Range<Integer> rangeOfFPS) {
+        mPreviewRequestBuilder.set( // Auto focus should be continuous for camera preview.
+                CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE,
+                rangeOfFPS);
+    }
+
+    private void cancelAnyCurrentlyActiveAutofocusTrigger() {
+        mPreviewRequestBuilder.set(
+                CaptureRequest.CONTROL_AF_TRIGGER,
+                CameraMetadata.CONTROL_AF_TRIGGER_CANCEL);
     }
 
     @Override
@@ -1037,47 +1070,46 @@ public class Camera2BasicFragment extends Fragment
         int imageWidth;
         int imageHeight;
 
-        public ImageSaver(Image image /*, File file*/) {
-            Log.i("ImageSaver","ImageSaver(Image image)");
+        ImageSaver(Image image /*, File file*/) {
+                Log.i("ImageSaver","ImageSaver(Image image)");
             long startTime = Calendar.getInstance().getTimeInMillis();
-            Log.i("ImageSaver","ImageSaver(Image image): start = "+startTime);
+                Log.i("ImageSaver","ImageSaver(Image image): start = "+startTime);
             ByteBuffer luminanceBuffer = /*mImage*/image.getPlanes()[0].getBuffer();
-            Log.i("ImageSaver","ImageSaver(Image image): after image.getPlanes()[0].getBuffer() in "+timeElapsed(startTime)+"ms");
+                Log.i("ImageSaver","ImageSaver(Image image): after image.getPlanes()[0].getBuffer() in "+timeElapsed(startTime)+"ms");
             /*byte[]*/ luminanceBytes = new byte[luminanceBuffer.remaining()];  // buffer size: current position is zero, remaining() gives "the number of elements between the current position and the limit"
-            Log.i("ImageSaver","ImageSaver(Image image): after luminanceBytes = new byte[luminanceBuffer.remaining()] in "+timeElapsed(startTime)+"ms");
+                Log.i("ImageSaver","ImageSaver(Image image): after luminanceBytes = new byte[luminanceBuffer.remaining()] in "+timeElapsed(startTime)+"ms");
             luminanceBuffer.get(luminanceBytes);                            // copy from buffer to bytes: get() "transfers bytes from this buffer into the given destination array"
             imageWidth = image.getWidth();
             imageHeight = image.getHeight();
-            Log.i("ImageSaver","ImageSaver(Image image): end after "+timeElapsed(startTime)+"ms");
+                Log.i("ImageSaver","ImageSaver(Image image): end after "+timeElapsed(startTime)+"ms");
         }
 
         @Override
         public void run() {
-            Log.i("ImageSaver","run()");
+                Log.i("ImageSaver","run()");
             long startTime = Calendar.getInstance().getTimeInMillis();
             Log.i("ImageSaver","run(): start = "+startTime);
             try {
-                Log.i("ImageSaver","run() : doing some work in the Try block");
+                    Log.i("ImageSaver","run() : doing some work in the Try block");
                 Random random = new Random();
                 if ( 1== random.nextInt() ) {
-                    Log.i("ImageSaver","run() : throwing an IOException at random while doing some work in the Try block");
+                        Log.i("ImageSaver","run() : throwing an IOException at random while doing some work in the Try block");
                     throw new IOException("No particular reason: ImageSaver.run() : throwing an IOException at random while doing some work in the Try block");
                 }
                 // dummy image processing code - https://boofcv.org/index.php?title=Android_support
-                long algorithmStepStartTime =0L;
-                algorithmStepStartTime = Calendar.getInstance().getTimeInMillis();
+                long algorithmStepStartTime = Calendar.getInstance().getTimeInMillis();
                 GrayF32 grayImage = new GrayF32(imageWidth,imageHeight);
-                Log.i("ImageSaver","run() : after constructing grayImage in "+timeElapsed(algorithmStepStartTime)+"ms");
+                    Log.i("ImageSaver","run() : after constructing grayImage in "+timeElapsed(algorithmStepStartTime)+"ms");
                 // from NV21 to gray scale
                 algorithmStepStartTime = Calendar.getInstance().getTimeInMillis();
                 ConvertNV21.nv21ToGray(luminanceBytes,imageWidth,imageHeight, grayImage);
-                Log.i("ImageSaver","run() : after converting nv21ToGray in "+timeElapsed(algorithmStepStartTime)+"ms");
+                    Log.i("ImageSaver","run() : after converting nv21ToGray in "+timeElapsed(algorithmStepStartTime)+"ms");
 
                 // start try detecting tags in the frame
                 double BOOFCV_TAG_WIDTH=0.14; // TODO - tag size is a parameter
                 int imageWidthInt = grayImage.getHeight(); // new Double(matGray.size().width).intValue();
                 int imageHeightInt = grayImage.getWidth(); //new Double(matGray.size().height).intValue();detect
-                Log.i("ImageSaver","run() : image dimensions: "+imageWidthInt+" pixels wide, "+imageHeightInt+" pixels high");
+                    Log.i("ImageSaver","run() : image dimensions: "+imageWidthInt+" pixels wide, "+imageHeightInt+" pixels high");
                 float imageWidthFloat =  (float)imageWidthInt; // new Double(matGray.size().width).intValue();
                 float imageHeightFloat = (float)imageHeightInt; //new Double(matGray.size().height).intValue();
                 float  focal_midpoint_pixels_x = imageWidthFloat/2.0f;
@@ -1091,39 +1123,39 @@ public class Camera2BasicFragment extends Fragment
                 float focal_length_in_pixels_y = 518.952669f * (imageHeightFloat/480.0f);  // TODO - for Samsung Galaxy S3s from /mnt/nixbig/ownCloud/project_AA1__1_1/results/2016_12_04_callibrate_in_ROS/calibrationdata_grey/ost.txt
 
 
-                Log.i("ImageSaver","run() : config FactoryFiducial.squareBinary");
+                    Log.i("ImageSaver","run() : config FactoryFiducial.squareBinary");
                 FiducialDetector<GrayF32> detector = FactoryFiducial.squareBinary(
                         new ConfigFiducialBinary(BOOFCV_TAG_WIDTH),
                         ConfigThreshold.local(ThresholdType.LOCAL_SQUARE, 10),          // TODO - evaluate parameter - ?'radius'?
                         GrayF32.class);  // tag size,  type,  ?'radius'?
                 //        detector.setLensDistortion(lensDistortion);
-                Log.i("ImageSaver","run() : config CameraPinhole pinholeModel");
+                    Log.i("ImageSaver","run() : config CameraPinhole pinholeModel");
                 CameraPinhole pinholeModel = new CameraPinhole(
                         focal_length_in_pixels_x, focal_length_in_pixels_y,
                         skew,
                         focal_midpoint_pixels_x,focal_midpoint_pixels_y,
                         imageWidthInt,imageHeightInt);
-                Log.i("ImageSaver","run() : config LensDistortionNarrowFOV pinholeDistort");
+                    Log.i("ImageSaver","run() : config LensDistortionNarrowFOV pinholeDistort");
                 LensDistortionNarrowFOV pinholeDistort = new LensDistortionPinhole(pinholeModel);
-                Log.i("ImageSaver","run() : config detector.setLensDistortion(pinholeDistort)");
+                    Log.i("ImageSaver","run() : config detector.setLensDistortion(pinholeDistort)");
                 detector.setLensDistortion(pinholeDistort);  // TODO - do BoofCV calibration - but assume perfect pinhole camera for now
 
                 // TODO - timing here  c[camera_num]-f[frameprocessed]
-                long timeNow = Calendar.getInstance().getTimeInMillis();
-                Log.i("ImageSaver","run() : start detector.detect(grayImage);");
-                Log.i("ImageSaver","run() : start detector.detect(grayImage) at "+Calendar.getInstance().getTimeInMillis());
+                long timeNow;
+                    Log.i("ImageSaver","run() : start detector.detect(grayImage);");
+                    Log.i("ImageSaver","run() : start detector.detect(grayImage) at "+Calendar.getInstance().getTimeInMillis());
                 detector.detect(grayImage);
-                Log.i("ImageSaver","run() : after detector.detect(grayImage) in "+timeElapsed(startTime)+"ms");
-                Log.i("ImageSaver","run() : finished detector.detect(grayImage);");
+                    Log.i("ImageSaver","run() : after detector.detect(grayImage) in "+timeElapsed(startTime)+"ms");
+                    Log.i("ImageSaver","run() : finished detector.detect(grayImage);");
                 String logTag = "ImageSaver";
                 for (int i = 0; i < detector.totalFound(); i++) {
                     timeNow = Calendar.getInstance().getTimeInMillis();
                     if( detector.hasUniqueID() ) {
                         long tag_id_long = detector.getId(i);
-                        Log.i(logTag, "run() : tag detection "+i+" after detector.getId("+i+") = "+tag_id_long+" in " + timeElapsed(timeNow) + "ms");
-                        Log.i(logTag, "run() : tag detection "+i+" after detector.getId("+i+") = "+tag_id_long+" in " + timeElapsed(startTime) + "ms");
+                            Log.i(logTag, "run() : tag detection "+i+" after detector.getId("+i+") = "+tag_id_long+" in " + timeElapsed(timeNow) + "ms");
+                            Log.i(logTag, "run() : tag detection "+i+" after detector.getId("+i+") = "+tag_id_long+" in " + timeElapsed(startTime) + "ms");
                     } else {
-                        Log.i(logTag, "run() : tag detection "+i+" has no id; detector.hasUniqueID() == false ");
+                            Log.i(logTag, "run() : tag detection "+i+" has no id; detector.hasUniqueID() == false ");
                     }
                 }
             } catch (IOException e) {
@@ -1158,12 +1190,12 @@ public class Camera2BasicFragment extends Fragment
             return overlapWithLastInitiation;
         }
 
-        void incConcurrentThreadsExecuting() {
-            concurrentThreadsExecuting.incrementAndGet();
+        int incConcurrentThreadsExecuting() {
+            return concurrentThreadsExecuting.incrementAndGet();
         }
 
-        void decConcurrentThreadsExecuting() {
-            concurrentThreadsExecuting.decrementAndGet();
+        int decConcurrentThreadsExecuting() {
+            return concurrentThreadsExecuting.decrementAndGet();
         }
 
         int concurrentThreadsExecuting() {
@@ -1261,12 +1293,12 @@ public class Camera2BasicFragment extends Fragment
             String logTag = "ImgeSv_p="+executionThreadId;
 
                 long startTime = Calendar.getInstance().getTimeInMillis();
-                Log.i(logTag, "doInBackground(): start = " + startTime);
+                    Log.i(logTag, "doInBackground(): start = " + startTime);
                 executionStartTimeMs = startTime;
                 taskCompletionTimer.incConcurrentThreadsExecuting();
                 try {
-                    Log.i(logTag, "doInBackground() : doing some work in the Try block: concurrentThreadsExecuting = "+taskCompletionTimer.concurrentThreadsExecuting());
-                    Log.i(logTag, "doInBackground() : doing some work in the Try block: Runtime.getRuntime().availableProcessors() = "+Runtime.getRuntime().availableProcessors());
+                        Log.i(logTag, "doInBackground() : doing some work in the Try block: concurrentThreadsExecuting = "+taskCompletionTimer.concurrentThreadsExecuting());
+                        Log.i(logTag, "doInBackground() : doing some work in the Try block: Runtime.getRuntime().availableProcessors() = "+Runtime.getRuntime().availableProcessors());
 
                     Random random = new Random();
                     if (1 == random.nextInt()) {
@@ -1277,17 +1309,17 @@ public class Camera2BasicFragment extends Fragment
                     long algorithmStepStartTime = 0L;
                     algorithmStepStartTime = Calendar.getInstance().getTimeInMillis();
                     GrayF32 grayImage = new GrayF32(imageWidth, imageHeight);
-                    Log.i(logTag, "doInBackground() : after constructing grayImage in " + timeElapsed(algorithmStepStartTime) + "ms");
+                        Log.i(logTag, "doInBackground() : after constructing grayImage in " + timeElapsed(algorithmStepStartTime) + "ms");
                     // from NV21 to gray scale
                     algorithmStepStartTime = Calendar.getInstance().getTimeInMillis();
                     ConvertNV21.nv21ToGray(luminanceBytes, imageWidth, imageHeight, grayImage);
-                    Log.i(logTag, "doInBackground() : after converting nv21ToGray in " + timeElapsed(algorithmStepStartTime) + "ms");
+                        Log.i(logTag, "doInBackground() : after converting nv21ToGray in " + timeElapsed(algorithmStepStartTime) + "ms");
 
                     // start try detecting tags in the frame
                     double BOOFCV_TAG_WIDTH = 0.14;
                     int imageWidthInt = grayImage.getHeight(); // new Double(matGray.size().width).intValue();
                     int imageHeightInt = grayImage.getWidth(); //new Double(matGray.size().height).intValue();
-                    Log.i(logTag,"doInBackground() : image dimensions: "+imageWidthInt+" pixels wide, "+imageHeightInt+" pixels high");
+                        Log.i(logTag,"doInBackground() : image dimensions: "+imageWidthInt+" pixels wide, "+imageHeightInt+" pixels high");
                     float imageWidthFloat = (float) imageWidthInt; // new Double(matGray.size().width).intValue();
                     float imageHeightFloat = (float) imageHeightInt; //new Double(matGray.size().height).intValue();
                     float focal_midpoint_pixels_x = imageWidthFloat / 2.0f;
@@ -1300,7 +1332,7 @@ public class Camera2BasicFragment extends Fragment
                     float focal_length_in_pixels_y = 518.952669f * (imageHeightFloat / 480.0f);  // TODO - for Samsung Galaxy S3s from /mnt/nixbig/ownCloud/project_AA1__1_1/results/2016_12_04_callibrate_in_ROS/calibrationdata_grey/ost.txt
 
 
-                    Log.i(logTag, "doInBackground() : config FactoryFiducial.squareBinary");
+                        Log.i(logTag, "doInBackground() : config FactoryFiducial.squareBinary");
                     FiducialDetector<GrayF32> detector = FactoryFiducial.squareBinary(
                             new ConfigFiducialBinary(BOOFCV_TAG_WIDTH),
                             ConfigThreshold.local(ThresholdType.LOCAL_SQUARE, 10),          // TODO - evaluate parameter - ?'radius'?
@@ -1319,21 +1351,42 @@ public class Camera2BasicFragment extends Fragment
 
                     // TODO - timing here  c[camera_num]-f[frameprocessed]
                     long timeNow = Calendar.getInstance().getTimeInMillis();
-                    Log.i(logTag, "doInBackground() : start detector.detect(grayImage);");
-                    Log.i(logTag, "doInBackground() : start detector.detect(grayImage) at " + timeNow);
+                        Log.i(logTag, "doInBackground() : start detector.detect(grayImage);");
+                        Log.i(logTag, "doInBackground() : start detector.detect(grayImage) at " + timeNow);
                     detector.detect(grayImage);
-                    Log.i(logTag, "doInBackground() : after detector.detect(grayImage) in " + timeElapsed(timeNow) + "ms");
-                    Log.i(logTag, "doInBackground() : after detector.detect(grayImage) : time since start = " + timeElapsed(startTime) + "ms");
-                    Log.i(logTag, "doInBackground() : finished detector.detect(grayImage);");
+                        Log.i(logTag, "doInBackground() : after detector.detect(grayImage) in " + timeElapsed(timeNow) + "ms");
+                        Log.i(logTag, "doInBackground() : after detector.detect(grayImage) : time since start = " + timeElapsed(startTime) + "ms");
+                        Log.i(logTag, "doInBackground() : finished detector.detect(grayImage);");
                     for (int i = 0; i < detector.totalFound(); i++) {
                         timeNow = Calendar.getInstance().getTimeInMillis();
+                        int tag_id = -1;
+                        MarkerIdValidator isTagIdValid = new MarkerIdValidator(detector, i, tag_id).invoke();
+                        if (!isTagIdValid.isValid()) {
+//// todo - might want to do this processing and image processing in a background thread but then push the image into a short queue that the UI thread can pull the latest from
+//// todo (cont) e.g. see https://stackoverflow.com/questions/19216893/android-camera-asynctask-with-preview-callback
+//// todo (cont) note that BoofCV draws to Swing windows, which is nice because it's cross-platform
+//// todo (cont) Processing or OpenGL or Unity might be better cross-platform choices
+////   todo - Processing - http://blog.blprnt.com/blog/blprnt/processing-android-mobile-app-development-made-very-easy  then  http://android.processing.org/  then https://www.mobileprocessing.org/cameras.html
+////
+//// todo - for threaded, have a look at why this wouldn't work: https://stackoverflow.com/questions/14963773/android-asynctask-to-process-live-video-frames
+////    https://stackoverflow.com/questions/18183016/android-camera-frame-processing-with-multithreading?rq=1
+////    https://stackoverflow.com/questions/12215702/how-to-use-blocking-queue-to-process-camera-feed-in-background?noredirect=1&lq=1
+////    https://stuff.mit.edu/afs/sipb/project/android/docs/training/displaying-bitmaps/process-bitmap.html
+////    https://stuff.mit.edu/afs/sipb/project/android/docs/training/multiple-threads/index.html
+////    https://stuff.mit.edu/afs/sipb/project/android/docs/training/graphics/opengl/index.html
+////                          drawMarkerLocationOnDisplay_BoofCV(detector, i, FeatureModel.FEATURE_WITHOUT_3D_LOCATION);
+                            continue;
+                        }
+                        tag_id = isTagIdValid.getTag_id();
                         if( detector.hasUniqueID() ) {
                             long tag_id_long = detector.getId(i);
-                            Log.i(logTag, "doInBackground() : tag detection "+i+" after detector.getId("+i+") = "+tag_id_long+" in " + timeElapsed(timeNow) + "ms");
-                            Log.i(logTag, "doInBackground() : tag detection "+i+" after detector.getId("+i+") = "+tag_id_long+" in " + timeElapsed(startTime) + "ms from start");
+                                Log.i(logTag, "doInBackground() : tag detection "+i+" after detector.getId("+i+") = "+tag_id_long+" in " + timeElapsed(timeNow) + "ms");
+                                Log.i(logTag, "doInBackground() : tag detection "+i+" after detector.getId("+i+") = "+tag_id_long+" in " + timeElapsed(startTime) + "ms from start");
                         } else {
-                            Log.i(logTag, "doInBackground() : tag detection "+i+" has no id; detector.hasUniqueID() == false ");
+                                Log.i(logTag, "doInBackground() : tag detection "+i+" has no id; detector.hasUniqueID() == false ");
+                            continue;
                         }
+
                     }
                 } catch (IOException e) {
                     e.printStackTrace();
