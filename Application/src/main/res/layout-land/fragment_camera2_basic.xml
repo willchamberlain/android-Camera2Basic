@@ -41,7 +41,14 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_gravity="center"
-            android:text="@string/picture" />
+            android:text="@string/picture_button_label" />
+
+        <Button
+            android:id="@+id/fps"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center_horizontal|top"
+            android:text="@string/fps_button_label" />
 
         <ImageButton
             android:id="@+id/info"

@@ -70,7 +70,9 @@ import java.util.Arrays;
 import java.util.Calendar;
 import java.util.Collections;
 import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Random;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.LinkedBlockingQueue;
@@ -104,6 +106,11 @@ public class Camera2BasicFragment extends Fragment
     public static final Range<Integer> FPS_FIFTEEN_FIFTEEN = new Range<>(15, 15);
     public static final Range<Integer> FPS_SEVEN_SEVEN = new Range<>(7, 7);
     public static final Range<Integer> FPS_FIVE_FIVE = new Range<>(5, 5);
+    static final int targetFPS = 6;
+    static final int maxConcurrentThreads = 8;
+    static final int numRecordsToUse = 10;
+    static int fps = 5;
+    public static  Range<Integer> fpsRange = new Range<>(fps, fps);
 
     static {
         ORIENTATIONS.append(Surface.ROTATION_0, 90);
@@ -512,9 +519,14 @@ public class Camera2BasicFragment extends Fragment
 
     @Override
     public void onViewCreated(final View view, Bundle savedInstanceState) {
-        view.findViewById(R.id.picture).setOnClickListener(this);
-        view.findViewById(R.id.info).setOnClickListener(this);
+        hookUpGuiButtons(view);
         mTextureView = (AutoFitTextureView) view.findViewById(R.id.texture);
+    }
+
+    private void hookUpGuiButtons(View view) {
+        view.findViewById(R.id.picture).setOnClickListener(this);
+        view.findViewById(R.id.fps).setOnClickListener(this);
+        view.findViewById(R.id.info).setOnClickListener(this);
     }
 
     @Override
@@ -829,7 +841,7 @@ public class Camera2BasicFragment extends Fragment
                                         CaptureRequest.CONTROL_AF_MODE,
                                         CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE);
 
-                                setAutoexposureToTargetRangeOfFPS(FPS_FIVE_FIVE);
+                                setAutoexposureToTargetRangeOfFPS(fpsRange);
                                 setAutoFlash(mPreviewRequestBuilder); // Flash is automatically enabled when necessary.
                                 mPreviewRequest = mPreviewRequestBuilder.build(); // Finally, we start displaying the camera preview.
                                 mCaptureSession.setRepeatingRequest(
@@ -884,6 +896,54 @@ public class Camera2BasicFragment extends Fragment
             matrix.postRotate(180, centerX, centerY);
         }
         mTextureView.setTransform(matrix);
+    }
+
+
+    private void adjustFps() {
+        if (dontHaveEnoughDataYet()) {
+            Log.i("Camera2BasicFragment","adjustFps(): numRecordsToUse < countOfFpsAndThreads.size(): "+numRecordsToUse+" < "+countOfFpsAndThreads.size());
+            return;
+        }
+        FPS.Change change = calculateFPSChangeAndClear();
+        switch (change) {
+            case DECREASE:
+                fps--;
+                fpsRange = new Range<Integer>(fps,fps);
+                Log.i("Camera2BasicFragment","adjustFps(): DECREASE: now "+fpsRange);
+                unlockFocusAndReturnToPreview();
+                Log.i("Camera2BasicFragment","adjustFps(): DECREASE: after unlockFocusAndReturnToPreview.");
+                break;
+            case INCREASE:
+                fps++;
+                fpsRange = new Range<Integer>(fps,fps);
+                Log.i("Camera2BasicFragment","adjustFps(): INCREASE: now "+fpsRange);
+                unlockFocusAndReturnToPreview();
+                Log.i("Camera2BasicFragment","adjustFps(): INCREASE: after unlockFocusAndReturnToPreview.");
+                break;
+            case NO_CHANGE:
+                Log.i("Camera2BasicFragment","adjustFps(): NO_CHANGE: still "+fpsRange);
+                break;
+            default:
+                Log.i("Camera2BasicFragment","adjustFps(): don't know what this value is : "+change.name());
+                break;
+        }
+    }
+
+    private FPS.Change calculateFPSChangeAndClear() {
+        int[] fps_ = new int[countOfFpsAndThreads.size()];
+        int[] concurrentThreads = new int[countOfFpsAndThreads.size()];
+        int i_ = 0;
+        for ( PerformanceMetric perf : countOfFpsAndThreads.values()) {
+            fps_[i_] = perf.fps();
+            concurrentThreads[i_] = perf.concurrentThreads();
+            i_++;
+        }
+        countOfFpsAndThreads.clear();
+        return FPS.calc(fps_,concurrentThreads,numRecordsToUse,targetFPS,maxConcurrentThreads);
+    }
+
+    private boolean dontHaveEnoughDataYet() {
+        return numRecordsToUse > countOfFpsAndThreads.size();
     }
 
     /**
@@ -1003,7 +1063,7 @@ public class Camera2BasicFragment extends Fragment
         try {
             // Reset the auto-focus trigger
             cancelAnyCurrentlyActiveAutofocusTrigger();
-            setAutoexposureToTargetRangeOfFPS(FPS_FIVE_FIVE);
+            setAutoexposureToTargetRangeOfFPS(fpsRange);
 
             setAutoFlash(mPreviewRequestBuilder);
             mCaptureSession.capture(
@@ -1023,6 +1083,7 @@ public class Camera2BasicFragment extends Fragment
     }
 
     private void setAutoexposureToTargetRangeOfFPS(Range<Integer> rangeOfFPS) {
+        Log.i("Camera2BasicFragment","setAutoexposureToTargetRangeOfFPS("+rangeOfFPS+")");
         mPreviewRequestBuilder.set( // Auto focus should be continuous for camera preview.
                 CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE,
                 rangeOfFPS);
@@ -1040,6 +1101,10 @@ public class Camera2BasicFragment extends Fragment
         switch (view.getId()) {
             case R.id.picture: {
                 takePicture();
+                break;
+            }
+            case R.id.fps: {
+                adjustFps();
                 break;
             }
             case R.id.info: {
@@ -1166,7 +1231,6 @@ public class Camera2BasicFragment extends Fragment
 
     }
 
-
     static private class TaskCompletionTimer {
 
         long threadCompletions = 1L;
@@ -1291,11 +1355,13 @@ public class Camera2BasicFragment extends Fragment
         protected Long doInBackground(Void... params) { //(Image...  images) {
             executionThreadId = Thread.currentThread().getId();
             String logTag = "ImgeSv_p="+executionThreadId;
-
-                long startTime = Calendar.getInstance().getTimeInMillis();
-                    Log.i(logTag, "doInBackground(): start = " + startTime);
+            long startTime = Calendar.getInstance().getTimeInMillis();
+            Log.i(logTag, "doInBackground(): start = " + startTime);
+            if( maxConcurrentThreads < taskCompletionTimer.incConcurrentThreadsExecuting() ) {
+                Log.i(logTag, "doInBackground(): stopping without processing: there are too many threads executing ");
+                return new Long(0L);
+            }
                 executionStartTimeMs = startTime;
-                taskCompletionTimer.incConcurrentThreadsExecuting();
                 try {
                         Log.i(logTag, "doInBackground() : doing some work in the Try block: concurrentThreadsExecuting = "+taskCompletionTimer.concurrentThreadsExecuting());
                         Log.i(logTag, "doInBackground() : doing some work in the Try block: Runtime.getRuntime().availableProcessors() = "+Runtime.getRuntime().availableProcessors());
@@ -1391,10 +1457,15 @@ public class Camera2BasicFragment extends Fragment
                 } catch (IOException e) {
                     e.printStackTrace();
                 } finally {
+                    long timeNow = Calendar.getInstance().getTimeInMillis();
+                    long timeElapsed = timeNow - startTime;
+                    int fps = (int) (1.0/(timeElapsed/1000.0));
+                    countOfFpsAndThreads.put("p="+executionThreadId+",t="+startTime, new PerformanceMetric(fps, taskCompletionTimer.concurrentThreadsExecuting()));
                 }
             executionEndTimeMs = Calendar.getInstance().getTimeInMillis();
             return new Long(0L);
         }
+
 
         @Override
         protected void onPreExecute() {
@@ -1413,6 +1484,28 @@ public class Camera2BasicFragment extends Fragment
         }
 
     }
+
+    class PerformanceMetric{
+        private int fps, concurrentThreads;
+        PerformanceMetric(int fps_, int concurrentThreads_) {
+            fps=fps_;
+            concurrentThreads=concurrentThreads_;
+        }
+
+        public int fps() { return fps; }
+
+        public int concurrentThreads() { return concurrentThreads; }
+    }
+
+
+    Map<String, PerformanceMetric>countOfFpsAndThreads = Collections.synchronizedMap(new LinkedHashMap<String, PerformanceMetric>()
+    {
+        @Override
+        protected boolean removeEldestEntry(Map.Entry<String, PerformanceMetric> eldest) {
+            return this.size() > 50;
+        }
+    });
+
 
     private static long timeElapsed(long startTime) {
         long timeNow;

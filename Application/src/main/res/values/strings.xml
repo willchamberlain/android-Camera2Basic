@@ -14,8 +14,9 @@
  limitations under the License.
 -->
 <resources>
-    <string name="picture">Picture</string>
+    <string name="picture_button_label">Picture</string>
     <string name="description_info">Info</string>
+    <string name="fps_button_label">FPS</string>
     <string name="request_permission">This sample needs camera permission.</string>
     <string name="camera_error">This device doesn\'t support Camera2 API.</string>
     <string name="help_title">2017_07_31_1800</string>
