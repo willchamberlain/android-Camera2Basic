@@ -48,6 +48,7 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.HandlerThread;
 import android.os.Process;
+import android.os.SystemClock;
 import android.support.annotation.NonNull;
 import android.support.v13.app.FragmentCompat;
 import android.support.v4.content.ContextCompat;
@@ -73,8 +74,10 @@ import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.NoSuchElementException;
 import java.util.Random;
 import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.ThreadFactory;
@@ -103,9 +106,6 @@ public class Camera2BasicFragment extends Fragment
     private static final SparseIntArray ORIENTATIONS = new SparseIntArray();
     private static final int REQUEST_CAMERA_PERMISSION = 1;
     private static final String FRAGMENT_DIALOG = "dialog";
-    public static final Range<Integer> FPS_FIFTEEN_FIFTEEN = new Range<>(15, 15);
-    public static final Range<Integer> FPS_SEVEN_SEVEN = new Range<>(7, 7);
-    public static final Range<Integer> FPS_FIVE_FIVE = new Range<>(5, 5);
     static final int targetFPS = 6;
     static final int maxConcurrentThreads = 8;
     static final int numRecordsToUse = 10;
@@ -275,7 +275,7 @@ public class Camera2BasicFragment extends Fragment
 
 
     /**
-     * TODO Do the image processing - this a callback object for the {@link ImageReader}. "onImageAvailable" will be called when a
+     * Do the image processing - this a callback object for the {@link ImageReader}. "onImageAvailable" will be called when a
      * still image is ready to be saved.
      */
     private final ImageReader.OnImageAvailableListener onImageAvailableListener
@@ -302,31 +302,16 @@ public class Camera2BasicFragment extends Fragment
                     break;
                 }
                 case RUN_ASYNC_ASYNCTASK: {
-                    if (skipRate <= 10 && skipRate>0 && frameNum%skipRate == 0 ) { // skip this image - e.g. if skipRate == 8 and frameNum == 16
-                        Log.i("Camera2BasicFragment","skipping frame "+frameNum+" on skipRate "+skipRate);
-                        if (image != null) {             // ?? causes an exception because !when the app starts! closed before can save                // TODO see https://stackoverflow.com/a/43564630/1200764
-                            image.close();               // ?? causes an exception because !when the app starts! closed before can save                // TODO see https://stackoverflow.com/a/43564630/1200764
-                        }
-                        break;
-                    }
-                    int TARGET_FRAME_RATE = 10;
-                    if ( skipRateReducedOnFrameNum < frameNum - 100 && skipRate > 2 && taskCompletionTimer.overlapWithLastInitiation() > (5000/TARGET_FRAME_RATE)) { // more than 1s overlap; going wrong
-                        skipRate--; if(skipRate < 2){ skipRate = 2; }
-                        skipRateReducedOnFrameNum = frameNum;
-                        Log.i("Camera2BasicFragment","at frame "+frameNum+" reduced skipRate to "+skipRate+" on taskCompletionTimer.overlapWithLastInitiation() = "+taskCompletionTimer.overlapWithLastInitiation()+" > (5000/"+TARGET_FRAME_RATE+")");
-                    }
+                    if (skipFrame(image)) break;
                     try {
                         //  new ImageSaverAsyncTask(image, taskCompletionTimer).executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR);  // https://stackoverflow.com/questions/18266161/achieving-concurrency-using-asynctask  https://developer.android.com/reference/java/util/concurrent/Executor.html
                         new ImageSaverAsyncTask(image, taskCompletionTimer).executeOnExecutor(threadPoolExecutor);  // https://stackoverflow.com/questions/18266161/achieving-concurrency-using-asynctask  https://developer.android.com/reference/java/util/concurrent/Executor.html
-
                         if (image != null) {             // ?? causes an exception because !when the app starts! closed before can save                // TODO see https://stackoverflow.com/a/43564630/1200764
                             image.close();               // ?? causes an exception because !when the app starts! closed before can save                // TODO see https://stackoverflow.com/a/43564630/1200764
                         }
                     } catch (java.util.concurrent.RejectedExecutionException ree) {
                         Log.w("Camera2BasicFragment","onImageAvailable(ImageReader reader): hit the limit of available threads with a java.util.concurrent.RejectedExecutionException");
-                        if(skipRate <= 10){ skipRate--; skipRateReducedOnFrameNum = frameNum; }
-                        if(skipRate > 10){ skipRate = 10; }
-                        if(skipRate < 2){ skipRate = 2; }
+                        skipRateOnException();
                         if (image != null) {             // ?? causes an exception because !when the app starts! closed before can save                // TODO see https://stackoverflow.com/a/43564630/1200764
                             image.close();               // ?? causes an exception because !when the app starts! closed before can save                // TODO see https://stackoverflow.com/a/43564630/1200764
                         }
@@ -337,6 +322,29 @@ public class Camera2BasicFragment extends Fragment
             }
         }
     };
+
+    private void skipRateOnException() {
+        if(skipRate <= 10){ skipRate--; skipRateReducedOnFrameNum = frameNum; }
+        if(skipRate > 10){ skipRate = 10; }
+        if(skipRate < 2){ skipRate = 2; }
+    }
+
+    private boolean skipFrame(Image image) {
+        if (skipRate <= 10 && skipRate>0 && frameNum%skipRate == 0 ) { // skip this image - e.g. if skipRate == 8 and frameNum == 16
+            Log.i("Camera2BasicFragment","skipping frame "+frameNum+" on skipRate "+skipRate);
+            if (image != null) {             // ?? causes an exception because !when the app starts! closed before can save                // TODO see https://stackoverflow.com/a/43564630/1200764
+                image.close();               // ?? causes an exception because !when the app starts! closed before can save                // TODO see https://stackoverflow.com/a/43564630/1200764
+            }
+            return true;
+        }
+        int TARGET_FRAME_RATE = 10;
+        if ( skipRateReducedOnFrameNum < frameNum - 100 && skipRate > 2 && taskCompletionTimer.overlapWithLastInitiation() > (5000/TARGET_FRAME_RATE)) { // more than 1s overlap; going wrong
+            skipRate--; if(skipRate < 2){ skipRate = 2; }
+            skipRateReducedOnFrameNum = frameNum;
+            Log.i("Camera2BasicFragment","at frame "+frameNum+" reduced skipRate to "+skipRate+" on taskCompletionTimer.overlapWithLastInitiation() = "+taskCompletionTimer.overlapWithLastInitiation()+" > (5000/"+TARGET_FRAME_RATE+")");
+        }
+        return false;
+    }
 
     /**
      * {@link CaptureRequest.Builder} for the camera preview
@@ -1355,13 +1363,13 @@ public class Camera2BasicFragment extends Fragment
         protected Long doInBackground(Void... params) { //(Image...  images) {
             executionThreadId = Thread.currentThread().getId();
             String logTag = "ImgeSv_p="+executionThreadId;
-            long startTime = Calendar.getInstance().getTimeInMillis();
-            Log.i(logTag, "doInBackground(): start = " + startTime);
+            long procStartTime = Calendar.getInstance().getTimeInMillis();
+            Log.i(logTag, "doInBackground(): start = " + procStartTime);
             if( maxConcurrentThreads < taskCompletionTimer.incConcurrentThreadsExecuting() ) {
                 Log.i(logTag, "doInBackground(): stopping without processing: there are too many threads executing ");
                 return new Long(0L);
             }
-                executionStartTimeMs = startTime;
+                executionStartTimeMs = procStartTime;
                 try {
                         Log.i(logTag, "doInBackground() : doing some work in the Try block: concurrentThreadsExecuting = "+taskCompletionTimer.concurrentThreadsExecuting());
                         Log.i(logTag, "doInBackground() : doing some work in the Try block: Runtime.getRuntime().availableProcessors() = "+Runtime.getRuntime().availableProcessors());
@@ -1374,7 +1382,8 @@ public class Camera2BasicFragment extends Fragment
                     // dummy image processing code - https://boofcv.org/index.php?title=Android_support
                     long algorithmStepStartTime = 0L;
                     algorithmStepStartTime = Calendar.getInstance().getTimeInMillis();
-                    GrayF32 grayImage = new GrayF32(imageWidth, imageHeight);
+                    GrayF32 grayImage = fetchAGrayImageToUse(imageWidth, imageHeight); //  new GrayF32(imageWidth, imageHeight);
+
                         Log.i(logTag, "doInBackground() : after constructing grayImage in " + timeElapsed(algorithmStepStartTime) + "ms");
                     // from NV21 to gray scale
                     algorithmStepStartTime = Calendar.getInstance().getTimeInMillis();
@@ -1417,12 +1426,9 @@ public class Camera2BasicFragment extends Fragment
 
                     // TODO - timing here  c[camera_num]-f[frameprocessed]
                     long timeNow = Calendar.getInstance().getTimeInMillis();
-                        Log.i(logTag, "doInBackground() : start detector.detect(grayImage);");
                         Log.i(logTag, "doInBackground() : start detector.detect(grayImage) at " + timeNow);
                     detector.detect(grayImage);
-                        Log.i(logTag, "doInBackground() : after detector.detect(grayImage) in " + timeElapsed(timeNow) + "ms");
-                        Log.i(logTag, "doInBackground() : after detector.detect(grayImage) : time since start = " + timeElapsed(startTime) + "ms");
-                        Log.i(logTag, "doInBackground() : finished detector.detect(grayImage);");
+                        Log.i(logTag, "doInBackground() : after detector.detect(grayImage) in " + timeElapsed(timeNow) + "ms: time since start = " + timeElapsed(procStartTime) + "ms");
                     for (int i = 0; i < detector.totalFound(); i++) {
                         timeNow = Calendar.getInstance().getTimeInMillis();
                         int tag_id = -1;
@@ -1444,26 +1450,35 @@ public class Camera2BasicFragment extends Fragment
                             continue;
                         }
                         tag_id = isTagIdValid.getTag_id();
+
+                        finishedUsingGrayImage(grayImage); grayImage = null;  // finished using the image, return it to the queue : cannot use it after this point
+
                         if( detector.hasUniqueID() ) {
                             long tag_id_long = detector.getId(i);
-                                Log.i(logTag, "doInBackground() : tag detection "+i+" after detector.getId("+i+") = "+tag_id_long+" in " + timeElapsed(timeNow) + "ms");
-                                Log.i(logTag, "doInBackground() : tag detection "+i+" after detector.getId("+i+") = "+tag_id_long+" in " + timeElapsed(startTime) + "ms from start");
+                                Log.i(logTag, "doInBackground() : tag detection "+i+" after detector.getId("+i+") = "+tag_id_long+" in " + timeElapsed(timeNow) + "ms : in " + timeElapsed(procStartTime) + "ms from start");
+                            // if is for a current task, track it
+
+                            // if is for a current task, report it
                         } else {
                                 Log.i(logTag, "doInBackground() : tag detection "+i+" has no id; detector.hasUniqueID() == false ");
                             continue;
                         }
-
                     }
                 } catch (IOException e) {
                     e.printStackTrace();
                 } finally {
                     long timeNow = Calendar.getInstance().getTimeInMillis();
-                    long timeElapsed = timeNow - startTime;
+                    long timeElapsed = timeNow - procStartTime;
                     int fps = (int) (1.0/(timeElapsed/1000.0));
-                    countOfFpsAndThreads.put("p="+executionThreadId+",t="+startTime, new PerformanceMetric(fps, taskCompletionTimer.concurrentThreadsExecuting()));
+                    recordPerformance(procStartTime, fps);
                 }
             executionEndTimeMs = Calendar.getInstance().getTimeInMillis();
             return new Long(0L);
+        }
+
+        private void recordPerformance(long startTime, int fps) {
+            countOfFpsAndThreads.put("p="+executionThreadId+",t="+startTime, new PerformanceMetric(fps, taskCompletionTimer.concurrentThreadsExecuting()));
+            logOfFpsAndThreads.put("p="+executionThreadId+",t="+startTime, new PerformanceMetric(fps, taskCompletionTimer.concurrentThreadsExecuting()));
         }
 
 
@@ -1498,13 +1513,58 @@ public class Camera2BasicFragment extends Fragment
     }
 
 
-    Map<String, PerformanceMetric>countOfFpsAndThreads = Collections.synchronizedMap(new LinkedHashMap<String, PerformanceMetric>()
+    Map<String, PerformanceMetric>countOfFpsAndThreads = Collections.synchronizedMap(new LinkedHashMap<String, PerformanceMetric>()  // convenient for the fixed-size
     {
         @Override
         protected boolean removeEldestEntry(Map.Entry<String, PerformanceMetric> eldest) {
             return this.size() > 50;
         }
     });
+
+
+    Map<String, PerformanceMetric>logOfFpsAndThreads = Collections.synchronizedMap(new LinkedHashMap<String, PerformanceMetric>()  // convenient for the fixed-size
+    {
+        @Override
+        protected boolean removeEldestEntry(Map.Entry<String, PerformanceMetric> eldest) {
+            return this.size() > 200;
+        }
+    });
+
+    ConcurrentLinkedQueue<GrayF32> unusedGrayImageQueue = new ConcurrentLinkedQueue<GrayF32>();   //  todo - persist in the application across onSleep/onResume for re-orientations
+
+    private void finishedUsingGrayImage(GrayF32 image_) {
+        Log.i("finishedUsingGrayImage","finishedUsingGrayImage");
+        if(null!=unusedGrayImageQueue && null!=image_) {
+            try {
+                unusedGrayImageQueue.add(image_);
+            } catch (Exception e) {
+                Log.e(TAG, "Exception in unusedGrayImageQueue.add(image_): CONTINUING after this exception: ",e);
+                e.printStackTrace();
+            }
+        }
+    }
+    private GrayF32 fetchAGrayImageToUse(int imageWidth_, int imageHeight_) {
+        GrayF32 unusedImage;
+        while(true) {
+            try {
+                unusedImage = unusedGrayImageQueue.remove();
+            } catch (NoSuchElementException e) {                    // queue is empty, so make a new image
+                Log.i("fetchAGrayImageToUse","queue is empty, so make a new image");
+                return new GrayF32(imageWidth_, imageHeight_);
+            }
+            if(unusedImage.getWidth() == imageWidth_ && unusedImage.getHeight() == imageHeight_) {
+                Log.i("fetchAGrayImageToUse","image is the right size");
+                return unusedImage;
+            } else if(unusedImage.getWidth() < imageWidth_ || unusedImage.getHeight() < imageHeight_) {     // too small: discard and continue
+                Log.i("fetchAGrayImageToUse","image is too small: discard and continue");
+                unusedImage = null;                                 // discard: setting to null to make intention plain.
+            } else if(unusedImage.getWidth() >= imageWidth_ || unusedImage.getHeight() >= imageHeight_) {   // too large: can resize
+                Log.i("fetchAGrayImageToUse","image is too large: can resize");
+                unusedImage.reshape(imageWidth_,imageHeight_);      // resize "without declaring new memory."
+                return unusedImage;
+            }
+        }
+    }
 
 
     private static long timeElapsed(long startTime) {
