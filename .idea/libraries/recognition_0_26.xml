@@ -1,0 +1,60 @@
+<component name="libraryTable">
+  <library name="recognition-0.26">
+    <CLASSES>
+      <root url="jar://$PROJECT_DIR$/../../../shadow_root_fs/home/will/.gradle/caches/modules-2/files-2.1/org.boofcv/recognition/0.26/137368d4b591f4e03d2db41fa79ebbb71f954ec1/recognition-0.26.jar!/" />
+    </CLASSES>
+    <JAVADOC />
+    <SOURCES>
+      <root url="jar://$PROJECT_DIR$/../../../shadow_root_fs/home/will/.gradle/caches/modules-2/files-2.1/org.boofcv/recognition/0.26/9145de5be9885f12cef3a27292aa1f751598ee8/recognition-0.26-sources.jar!/" />
+      <root url="file://$PROJECT_DIR$/../../boofcv_and_related/lessthanoptimal/BoofCV/applications/src" />
+      <root url="file://$PROJECT_DIR$/../../boofcv_and_related/lessthanoptimal/BoofCV/demonstrations/src" />
+      <root url="file://$PROJECT_DIR$/../../boofcv_and_related/lessthanoptimal/BoofCV/examples/build/tmp/expandedArchives/annotations-2.0.1.jar_12siop45018k4licoldk07gvge" />
+      <root url="file://$PROJECT_DIR$/../../boofcv_and_related/lessthanoptimal/BoofCV/examples/src" />
+      <root url="file://$PROJECT_DIR$/../../boofcv_and_related/lessthanoptimal/BoofCV/integration/boofcv-WebcamCapture/examples" />
+      <root url="file://$PROJECT_DIR$/../../boofcv_and_related/lessthanoptimal/BoofCV/integration/boofcv-WebcamCapture/src" />
+      <root url="file://$PROJECT_DIR$/../../boofcv_and_related/lessthanoptimal/BoofCV/integration/boofcv-all/src" />
+      <root url="file://$PROJECT_DIR$/../../boofcv_and_related/lessthanoptimal/BoofCV/integration/boofcv-android/examples/video/app/src/main/java" />
+      <root url="file://$PROJECT_DIR$/../../boofcv_and_related/lessthanoptimal/BoofCV/integration/boofcv-android/src" />
+      <root url="file://$PROJECT_DIR$/../../boofcv_and_related/lessthanoptimal/BoofCV/integration/boofcv-android/test" />
+      <root url="file://$PROJECT_DIR$/../../boofcv_and_related/lessthanoptimal/BoofCV/integration/boofcv-ffmpeg/src" />
+      <root url="file://$PROJECT_DIR$/../../boofcv_and_related/lessthanoptimal/BoofCV/integration/boofcv-javacv/src" />
+      <root url="file://$PROJECT_DIR$/../../boofcv_and_related/lessthanoptimal/BoofCV/integration/boofcv-javacv/test" />
+      <root url="file://$PROJECT_DIR$/../../boofcv_and_related/lessthanoptimal/BoofCV/integration/boofcv-javafx/examples/src" />
+      <root url="file://$PROJECT_DIR$/../../boofcv_and_related/lessthanoptimal/BoofCV/integration/boofcv-javafx/src" />
+      <root url="file://$PROJECT_DIR$/../../boofcv_and_related/lessthanoptimal/BoofCV/integration/boofcv-jcodec/examples" />
+      <root url="file://$PROJECT_DIR$/../../boofcv_and_related/lessthanoptimal/BoofCV/integration/boofcv-jcodec/src" />
+      <root url="file://$PROJECT_DIR$/../../boofcv_and_related/lessthanoptimal/BoofCV/integration/boofcv-openkinect/examples/src" />
+      <root url="file://$PROJECT_DIR$/../../boofcv_and_related/lessthanoptimal/BoofCV/integration/boofcv-openkinect/src" />
+      <root url="file://$PROJECT_DIR$/../../boofcv_and_related/lessthanoptimal/BoofCV/integration/boofcv-openkinect/test" />
+      <root url="file://$PROJECT_DIR$/../../boofcv_and_related/lessthanoptimal/BoofCV/integration/boofcv-swing/src" />
+      <root url="file://$PROJECT_DIR$/../../boofcv_and_related/lessthanoptimal/BoofCV/main/autocode/src" />
+      <root url="file://$PROJECT_DIR$/../../boofcv_and_related/lessthanoptimal/BoofCV/main/boofcv-calibration/src" />
+      <root url="file://$PROJECT_DIR$/../../boofcv_and_related/lessthanoptimal/BoofCV/main/boofcv-calibration/test" />
+      <root url="file://$PROJECT_DIR$/../../boofcv_and_related/lessthanoptimal/BoofCV/main/boofcv-core/src" />
+      <root url="file://$PROJECT_DIR$/../../boofcv_and_related/lessthanoptimal/BoofCV/main/boofcv-feature/benchmark" />
+      <root url="file://$PROJECT_DIR$/../../boofcv_and_related/lessthanoptimal/BoofCV/main/boofcv-feature/experimental/src" />
+      <root url="file://$PROJECT_DIR$/../../boofcv_and_related/lessthanoptimal/BoofCV/main/boofcv-feature/experimental/test" />
+      <root url="file://$PROJECT_DIR$/../../boofcv_and_related/lessthanoptimal/BoofCV/main/boofcv-feature/generate" />
+      <root url="file://$PROJECT_DIR$/../../boofcv_and_related/lessthanoptimal/BoofCV/main/boofcv-feature/src" />
+      <root url="file://$PROJECT_DIR$/../../boofcv_and_related/lessthanoptimal/BoofCV/main/boofcv-feature/test" />
+      <root url="file://$PROJECT_DIR$/../../boofcv_and_related/lessthanoptimal/BoofCV/main/boofcv-geo/benchmark" />
+      <root url="file://$PROJECT_DIR$/../../boofcv_and_related/lessthanoptimal/BoofCV/main/boofcv-geo/src" />
+      <root url="file://$PROJECT_DIR$/../../boofcv_and_related/lessthanoptimal/BoofCV/main/boofcv-geo/test" />
+      <root url="file://$PROJECT_DIR$/../../boofcv_and_related/lessthanoptimal/BoofCV/main/boofcv-io/benchmark" />
+      <root url="file://$PROJECT_DIR$/../../boofcv_and_related/lessthanoptimal/BoofCV/main/boofcv-io/src" />
+      <root url="file://$PROJECT_DIR$/../../boofcv_and_related/lessthanoptimal/BoofCV/main/boofcv-io/test" />
+      <root url="file://$PROJECT_DIR$/../../boofcv_and_related/lessthanoptimal/BoofCV/main/boofcv-ip/benchmark" />
+      <root url="file://$PROJECT_DIR$/../../boofcv_and_related/lessthanoptimal/BoofCV/main/boofcv-ip/generate" />
+      <root url="file://$PROJECT_DIR$/../../boofcv_and_related/lessthanoptimal/BoofCV/main/boofcv-ip/src" />
+      <root url="file://$PROJECT_DIR$/../../boofcv_and_related/lessthanoptimal/BoofCV/main/boofcv-ip/test" />
+      <root url="file://$PROJECT_DIR$/../../boofcv_and_related/lessthanoptimal/BoofCV/main/boofcv-learning/src" />
+      <root url="file://$PROJECT_DIR$/../../boofcv_and_related/lessthanoptimal/BoofCV/main/boofcv-learning/test" />
+      <root url="file://$PROJECT_DIR$/../../boofcv_and_related/lessthanoptimal/BoofCV/main/boofcv-recognition/benchmark" />
+      <root url="file://$PROJECT_DIR$/../../boofcv_and_related/lessthanoptimal/BoofCV/main/boofcv-recognition/src" />
+      <root url="file://$PROJECT_DIR$/../../boofcv_and_related/lessthanoptimal/BoofCV/main/boofcv-recognition/test" />
+      <root url="file://$PROJECT_DIR$/../../boofcv_and_related/lessthanoptimal/BoofCV/main/boofcv-sfm/src" />
+      <root url="file://$PROJECT_DIR$/../../boofcv_and_related/lessthanoptimal/BoofCV/main/boofcv-sfm/test" />
+      <root url="file://$PROJECT_DIR$/../../boofcv_and_related/lessthanoptimal/BoofCV/main/checks/test" />
+    </SOURCES>
+  </library>
+</component>
