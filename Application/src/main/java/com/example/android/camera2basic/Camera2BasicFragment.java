@@ -48,7 +48,6 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.HandlerThread;
 import android.os.Process;
-import android.os.SystemClock;
 import android.support.annotation.NonNull;
 import android.support.v13.app.FragmentCompat;
 import android.support.v4.content.ContextCompat;
@@ -100,6 +99,30 @@ import boofcv.struct.image.GrayF32;
 public class Camera2BasicFragment extends Fragment
         implements View.OnClickListener, FragmentCompat.OnRequestPermissionsResultCallback {
 
+    // This snippet hides the system bars.
+    private void hideSystemUI() {
+        // Set the IMMERSIVE flag.
+        // Set the content to appear under the system bars so that the content
+        // doesn't resize when the system bars hide and show.
+        getView().setSystemUiVisibility(
+                View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+                        | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+                        | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                        | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION // hide nav bar
+                        | View.SYSTEM_UI_FLAG_FULLSCREEN // hide status bar
+                        | View.SYSTEM_UI_FLAG_IMMERSIVE);
+    }
+
+    // This snippet shows the system bars. It does this by removing all the flags
+// except for the ones that make the content appear under the system bars.
+    private void showSystemUI() {
+        getView().setSystemUiVisibility(
+                View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+                        | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+                        | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN);
+    }
+
+
     /**
      * Conversion from screen rotation to JPEG orientation.
      */
@@ -110,7 +133,10 @@ public class Camera2BasicFragment extends Fragment
     static final int maxConcurrentThreads = 8;
     static final int numRecordsToUse = 10;
     static int fps = 5;
-    public static  Range<Integer> fpsRange = new Range<>(fps, fps);
+    static int fps10 = 10;
+    static int fps20 = 20;
+    static int fpsUpper = fps10;
+    public static  Range<Integer> fpsRange = new Range<>(fps, fpsUpper);
 
     static {
         ORIENTATIONS.append(Surface.ROTATION_0, 90);
@@ -211,6 +237,7 @@ public class Camera2BasicFragment extends Fragment
      * The {@link android.util.Size} of camera preview.
      */
     private Size imageSize;
+    private Size imageReaderSize;
 
 
     /**
@@ -282,11 +309,17 @@ public class Camera2BasicFragment extends Fragment
             = new ImageReader.OnImageAvailableListener() {
         final int RUN_ASYNC_BACKGROUNDHANDLER =  10;
         final int RUN_ASYNC_ASYNCTASK =         20;
-        final int RUN_ASYNC_METHOD =            RUN_ASYNC_ASYNCTASK;
+        final int RUN_ASYNC_METHOD =            RUN_ASYNC_ASYNCTASK; //RUN_ASYNC_BACKGROUNDHANDLER; //RUN_ASYNC_ASYNCTASK;
 
         @Override
         public void onImageAvailable(ImageReader reader) {
-            Image image =  reader.acquireNextImage();       // TODO see https://stackoverflow.com/a/43564630/1200764
+            //Image image =  reader.acquireNextImage();       // TODO see https://stackoverflow.com/a/43564630/1200764
+            Image image =  reader.acquireLatestImage();       // TODO see https://stackoverflow.com/a/43564630/1200764
+            if (null == image) {
+                Log.w("onImageAvailable","null == image : frameNum="+frameNum);
+                return;
+            }
+            System.out.println("onImageAvailable: ImageReader image size= "+image.getWidth()+"x"+image.getHeight());
             frameNum++;  if (frameNum == Long.MAX_VALUE) { frameNum=1; }
             switch (RUN_ASYNC_METHOD) {
                 case RUN_ASYNC_BACKGROUNDHANDLER: {
@@ -318,7 +351,15 @@ public class Camera2BasicFragment extends Fragment
                     }
                     break;
                 }
-                default:
+                default: {
+
+                }
+                try {
+                    if (image != null) {             // ?? causes an exception because !when the app starts! closed before can save                // TODO see https://stackoverflow.com/a/43564630/1200764
+                        image.close();               // ?? causes an exception because !when the app starts! closed before can save                // TODO see https://stackoverflow.com/a/43564630/1200764
+                    } } catch(Exception e) {
+                    Log.e("Camera2BasicFragment","error closing image in final try-catch block.");
+                }
             }
         }
     };
@@ -474,15 +515,15 @@ public class Camera2BasicFragment extends Fragment
      *
      * @param choices           The list of sizes that the camera supports for the intended output
      *                          class
-     * @param textureViewWidth  The width of the texture view relative to sensor coordinate
-     * @param textureViewHeight The height of the texture view relative to sensor coordinate
+     * @param softMinWidth  The width of the texture view relative to sensor coordinate
+     * @param softMinHeight The height of the texture view relative to sensor coordinate
      * @param maxWidth          The maximum width that can be chosen
      * @param maxHeight         The maximum height that can be chosen
      * @param aspectRatio       The aspect ratio
      * @return The optimal {@code Size}, or an arbitrary one if none were big enough
      */
-    private static Size chooseOptimalSizeForImage(Size[] choices, int textureViewWidth,
-                                                  int textureViewHeight, int maxWidth, int maxHeight, Size aspectRatio) {
+    private static Size chooseOptimalSizeForImage(Size[] choices, int softMinWidth,
+                                                  int softMinHeight, int maxWidth, int maxHeight, Size aspectRatio) {
 
         // Collect the supported resolutions that are at least as big as the preview Surface
         List<Size> bigEnough = new ArrayList<>();
@@ -491,10 +532,11 @@ public class Camera2BasicFragment extends Fragment
         int w = aspectRatio.getWidth();
         int h = aspectRatio.getHeight();
         for (Size option : choices) {
+            System.out.println("chooseOptimalSizeForImage: image size option = "+option.getWidth()+"x"+option.getHeight());
             if (option.getWidth() <= maxWidth && option.getHeight() <= maxHeight &&
                     option.getHeight() == option.getWidth() * h / w) {
-                if (option.getWidth() >= textureViewWidth &&
-                    option.getHeight() >= textureViewHeight) {
+                if (option.getWidth() >= softMinWidth &&
+                    option.getHeight() >= softMinHeight) {
                     bigEnough.add(option);
                 } else {
                     notBigEnough.add(option);
@@ -505,11 +547,17 @@ public class Camera2BasicFragment extends Fragment
         // Pick the smallest of those big enough. If there is no one big enough, pick the
         // largest of those not big enough.
         if (bigEnough.size() > 0) {
-            return Collections.min(bigEnough, new CompareSizesByArea());
+            // return Collections.min(bigEnough, new CompareSizesByArea());
+            Size size = Collections.min(bigEnough, new CompareSizesByArea());
+            System.out.println("chooseOptimalSizeForImage: returning size="+size);
+            return size;
         } else if (notBigEnough.size() > 0) {
-            return Collections.max(notBigEnough, new CompareSizesByArea());
+            // return Collections.max(notBigEnough, new CompareSizesByArea());
+            Size size = Collections.max(notBigEnough, new CompareSizesByArea());
+            System.out.println("chooseOptimalSizeForImage: returning size="+size);
+            return size;
         } else {
-            Log.e(TAG, "Couldn't find any suitable preview size");
+            Log.e(TAG, "chooseOptimalSizeForImage: Couldn't find any suitable preview size: returning size="+choices[0].toString());
             return choices[0];
         }
     }
@@ -529,6 +577,7 @@ public class Camera2BasicFragment extends Fragment
     public void onViewCreated(final View view, Bundle savedInstanceState) {
         hookUpGuiButtons(view);
         mTextureView = (AutoFitTextureView) view.findViewById(R.id.texture);
+        System.out.println("onViewCreated: mTextureView size = "+mTextureView.getWidth()+"x"+mTextureView.getHeight());
     }
 
     private void hookUpGuiButtons(View view) {
@@ -560,6 +609,8 @@ public class Camera2BasicFragment extends Fragment
         // the SurfaceTextureListener).
         if (mTextureView.isAvailable()) {
             openCamera(mTextureView.getWidth(), mTextureView.getHeight());
+            System.out.println("onResume(): mTextureView size = "+mTextureView.getWidth()+"x"+mTextureView.getHeight());
+//            hideSystemUI();
         } else {
             mTextureView.setSurfaceTextureListener(mSurfaceTextureListener);
         }
@@ -576,8 +627,8 @@ public class Camera2BasicFragment extends Fragment
     }
 
     private void requestCameraPermission() {
-        if (FragmentCompat.shouldShowRequestPermissionRationale(this, Manifest.permission.CAMERA)) {
-            new ConfirmationDialog().show(getChildFragmentManager(), FRAGMENT_DIALOG);
+        if (FragmentCompat.shouldShowRequestPermissionRationale(this, Manifest.permission.CAMERA)) {        // be fancy to explain why the user should give the permission if it's not obvious from the application type "whether you should show UI with rationale for requesting a permission"
+            new ConfirmationDialogFragment().show(getChildFragmentManager(), FRAGMENT_DIALOG);              // show the dialog - ConfirmationDialogFragment.onCreateDialog gets called somewhere along the way
         } else {
             FragmentCompat.requestPermissions(this, new String[]{Manifest.permission.CAMERA},
                     REQUEST_CAMERA_PERMISSION);
@@ -617,7 +668,7 @@ public class Camera2BasicFragment extends Fragment
                 if (map == null) { continue; }
 
                 // For still image captures, we use the largest available size.
-                Size largest = Collections.max(
+                Size largest_camera_image_for_format = Collections.max(
                         Arrays.asList(map.getOutputSizes(ImageFormat.YUV_420_888 /*ImageFormat.JPEG*/ )),         // TODO see https://stackoverflow.com/a/43564630/1200764
                         new CompareSizesByArea());
 
@@ -629,41 +680,94 @@ public class Camera2BasicFragment extends Fragment
                 mSensorOrientation = cameraDetails.get(CameraCharacteristics.SENSOR_ORIENTATION);
 
                 Point displaySize = new Point();
-                activity.getWindowManager().getDefaultDisplay().getSize(displaySize);
-                int rotatedPreviewWidth = width;         int rotatedPreviewHeight = height;
-                int maxPreviewWidth     = displaySize.x; int maxPreviewHeight     = displaySize.y;
-                boolean swappedDimensions = false;
-                switch (displayRotation) {
-                    case Surface.ROTATION_0: case Surface.ROTATION_180:
-                        if (mSensorOrientation == 90 || mSensorOrientation == 270) { swappedDimensions = true; }
-                        break;
-                    case Surface.ROTATION_90: case Surface.ROTATION_270:
-                        if (mSensorOrientation == 0 || mSensorOrientation == 180) { swappedDimensions = true; }
-                        break;
-                    default:
-                        Log.e(TAG, "Display rotation is invalid: " + displayRotation);
-                }
-                if (swappedDimensions) {
-                    rotatedPreviewWidth = height;         rotatedPreviewHeight = width;
-                    maxPreviewWidth     = displaySize.y;  maxPreviewHeight     = displaySize.x;
-                }
-                if (maxPreviewWidth > MAX_PREVIEW_WIDTH) { maxPreviewWidth = MAX_PREVIEW_WIDTH; }
-                if (maxPreviewHeight > MAX_PREVIEW_HEIGHT) { maxPreviewHeight = MAX_PREVIEW_HEIGHT; }
+                CalcPreviewSize calcPreviewSize = new CalcPreviewSize(width, height, activity, displayRotation, displaySize).invoke();
+                int rotatedPreviewWidth = calcPreviewSize.getRotatedPreviewWidth();
+                int rotatedPreviewHeight = calcPreviewSize.getRotatedPreviewHeight();
+                int maxPreviewWidth = calcPreviewSize.getMaxPreviewWidth();
+                int maxPreviewHeight = calcPreviewSize.getMaxPreviewHeight();
+
+//                Size[] imageReaderSizes = new Size[]{
+//                        new Size(4160,3120),  // Nexus5 landscape 4:3
+//                        new Size(1920,1440)}; // Nexus5 portrait  4:3
+                /*
+                Landscape
+                01-10 16:54:03.214 8297-8297/com.example.android.camera2basic I/System.out: chooseOptimalSizeForImage: image size option = 2592x1728
+                01-10 16:54:03.214 8297-8297/com.example.android.camera2basic I/System.out: chooseOptimalSizeForImage: image size option = 2048x1536
+                01-10 16:54:03.214 8297-8297/com.example.android.camera2basic I/System.out: chooseOptimalSizeForImage: image size option = 1920x1440
+                01-10 16:54:03.214 8297-8297/com.example.android.camera2basic I/System.out: chooseOptimalSizeForImage: image size option = 1920x1080
+                01-10 16:54:03.214 8297-8297/com.example.android.camera2basic I/System.out: chooseOptimalSizeForImage: image size option = 1280x960
+                01-10 16:54:03.214 8297-8297/com.example.android.camera2basic I/System.out: chooseOptimalSizeForImage: image size option = 1280x768
+                01-10 16:54:03.214 8297-8297/com.example.android.camera2basic I/System.out: chooseOptimalSizeForImage: image size option = 1280x720
+                01-10 16:54:03.214 8297-8297/com.example.android.camera2basic I/System.out: chooseOptimalSizeForImage: image size option = 1024x768
+                01-10 16:54:03.214 8297-8297/com.example.android.camera2basic I/System.out: chooseOptimalSizeForImage: image size option = 800x600
+                01-10 16:54:03.214 8297-8297/com.example.android.camera2basic I/System.out: chooseOptimalSizeForImage: image size option = 800x480
+                01-10 16:54:03.214 8297-8297/com.example.android.camera2basic I/System.out: chooseOptimalSizeForImage: image size option = 720x480
+                01-10 16:54:03.214 8297-8297/com.example.android.camera2basic I/System.out: chooseOptimalSizeForImage: image size option = 640x480
+                01-10 16:54:03.214 8297-8297/com.example.android.camera2basic I/System.out: chooseOptimalSizeForImage: image size option = 352x288
+                01-10 16:54:03.214 8297-8297/com.example.android.camera2basic I/System.out: chooseOptimalSizeForImage: image size option = 320x240
+                01-10 16:54:03.214 8297-8297/com.example.android.camera2basic I/System.out: chooseOptimalSizeForImage: image size option = 176x144
+
+                Portrait
+                01-10 16:55:05.461 8501-8501/? I/System.out: chooseOptimalSizeForImage: image size option = 4160x3120
+                01-10 16:55:05.461 8501-8501/? I/System.out: chooseOptimalSizeForImage: image size option = 4160x2774
+                01-10 16:55:05.461 8501-8501/? I/System.out: chooseOptimalSizeForImage: image size option = 4160x2340
+                01-10 16:55:05.461 8501-8501/? I/System.out: chooseOptimalSizeForImage: image size option = 4000x3000
+                01-10 16:55:05.461 8501-8501/? I/System.out: chooseOptimalSizeForImage: image size option = 3840x2160
+                01-10 16:55:05.461 8501-8501/? I/System.out: chooseOptimalSizeForImage: image size option = 3264x2176
+                01-10 16:55:05.461 8501-8501/? I/System.out: chooseOptimalSizeForImage: image size option = 3200x2400
+                01-10 16:55:05.461 8501-8501/? I/System.out: chooseOptimalSizeForImage: image size option = 3200x1800
+                01-10 16:55:05.461 8501-8501/? I/System.out: chooseOptimalSizeForImage: image size option = 2592x1944
+                01-10 16:55:05.461 8501-8501/? I/System.out: chooseOptimalSizeForImage: image size option = 2592x1728
+                01-10 16:55:05.461 8501-8501/? I/System.out: chooseOptimalSizeForImage: image size option = 2048x1536
+                01-10 16:55:05.461 8501-8501/? I/System.out: chooseOptimalSizeForImage: image size option = 1920x1440
+                01-10 16:55:05.461 8501-8501/? I/System.out: chooseOptimalSizeForImage: image size option = 1920x1080
+                01-10 16:55:05.461 8501-8501/? I/System.out: chooseOptimalSizeForImage: image size option = 1280x960
+                01-10 16:55:05.461 8501-8501/? I/System.out: chooseOptimalSizeForImage: image size option = 1280x768
+                01-10 16:55:05.462 8501-8501/? I/System.out: chooseOptimalSizeForImage: image size option = 1280x720
+                01-10 16:55:05.462 8501-8501/? I/System.out: chooseOptimalSizeForImage: image size option = 1024x768
+                01-10 16:55:05.462 8501-8501/? I/System.out: chooseOptimalSizeForImage: image size option = 800x600
+                01-10 16:55:05.462 8501-8501/? I/System.out: chooseOptimalSizeForImage: image size option = 800x480
+                01-10 16:55:05.462 8501-8501/? I/System.out: chooseOptimalSizeForImage: image size option = 720x480
+                01-10 16:55:05.462 8501-8501/? I/System.out: chooseOptimalSizeForImage: image size option = 640x480
+                01-10 16:55:05.462 8501-8501/? I/System.out: chooseOptimalSizeForImage: image size option = 352x288
+                01-10 16:55:05.462 8501-8501/? I/System.out: chooseOptimalSizeForImage: image size option = 320x240
+                01-10 16:55:05.462 8501-8501/? I/System.out: chooseOptimalSizeForImage: image size option = 176x144
+                */
 
                 // Danger, W.R.! Attempting to use too large a preview size could  exceed the camera
                 // bus' bandwidth limitation, resulting in gorgeous previews but the storage of
                 // garbage capture data.
                 imageSize = chooseOptimalSizeForImage(map.getOutputSizes(SurfaceTexture.class),  // TODO - match the mImageReader = ImageReader.newInstance() to this preview size
                         rotatedPreviewWidth, rotatedPreviewHeight, 
-                        maxPreviewWidth, maxPreviewHeight, largest);
-                    Log.i(TAG, "setUpCameraOutputs(int "+width+", int "+height+"): mPreviewSize: "+imageSize.getWidth()+"x"+imageSize.getHeight());
+                        maxPreviewWidth, maxPreviewHeight, largest_camera_image_for_format);
+
+                Size[] imageReaderSizes = new Size[]{
+                        //  new Size(4160,3120),  // Nexus5 landscape 4:3 maximum resolution
+                        //  new Size(2592,1944), //Nexus5 landscape 4:3
+                        new Size(1920,1440), //Nexus5 landscape 4:3
+                        new Size(1280, 960), //Nexus5 landscape 4:3
+                        new Size(1024, 768), //Nexus5 landscape 4:3
+                        new Size( 320, 240)  //Nexus5 landscape 4:3  -  bottom-end failsafe
+                }; // Nexus5 portrait  4:3
+//                int maxSizeWidth = 1920;  int maxSizeHeight = 1440;
+//                int maxSizeWidth = 1280;  int maxSizeHeight = 960;
+                int maxSizeWidth = 1024;  int maxSizeHeight = 768;
+                imageReaderSize = chooseOptimalSizeForImage( imageReaderSizes,
+                        rotatedPreviewWidth, rotatedPreviewHeight,
+                        maxSizeWidth, maxSizeHeight,
+                        largest_camera_image_for_format);
+                    Log.i(TAG, "setUpCameraOutputs(int "+width+", int "+height+"): imageSize= "+imageSize.getWidth()+"x"+imageSize.getHeight());
                     /* TODO - "the ImageReader class allows direct application access to image data rendered into a {@link android.view.Surface"*/
                 if (getResources().getConfiguration().orientation == Configuration.ORIENTATION_LANDSCAPE) {
                     mTextureView.setAspectRatio(imageSize.getWidth(), imageSize.getHeight());           // Fit the aspect ratio of TextureView to the size of preview.
-                    mImageReader = ImageReader.newInstance( imageSize.getWidth(), imageSize.getHeight(), ImageFormat.YUV_420_888, 2 /*maxImages*/ ); // TODO see https://stackoverflow.com/a/43564630/1200764 - this scaling is arbitrary; reduces the max width from 4160 to 240, so always get 320x240
+       //             mImageReader = ImageReader.newInstance( imageSize.getWidth(), imageSize.getHeight(), ImageFormat.YUV_420_888, 2 /*maxImages*/ ); // TODO see https://stackoverflow.com/a/43564630/1200764 - this scaling is arbitrary; reduces the max width from 4160 to 240, so always get 320x240
+                    // mImageReader = ImageReader.newInstance( largest_camera_image_for_format.getWidth(), largest_camera_image_for_format.getHeight(), ImageFormat.YUV_420_888, 2 /*maxImages*/ ); // TODO see https://stackoverflow.com/a/43564630/1200764 - this scaling is arbitrary; reduces the max width from 4160 to 240, so always get 320x240
+                    mImageReader = ImageReader.newInstance( imageReaderSize.getWidth(), imageReaderSize.getHeight() , ImageFormat.YUV_420_888, 2 /*maxImages*/ ); // TODO see https://stackoverflow.com/a/43564630/1200764 - this scaling is arbitrary; reduces the max width from 4160 to 240, so always get 320x240
                 } else {
                     mTextureView.setAspectRatio(imageSize.getHeight(), imageSize.getWidth());
-                    mImageReader = ImageReader.newInstance( imageSize.getHeight(), imageSize.getWidth(), ImageFormat.YUV_420_888, 2 /*maxImages*/ ); // TODO see https://stackoverflow.com/a/43564630/1200764 - this scaling is arbitrary; reduces the max width from 4160 to 240, so always get 320x240
+       //             mImageReader = ImageReader.newInstance( imageSize.getHeight(), imageSize.getWidth(), ImageFormat.YUV_420_888, 2 /*maxImages*/ ); // TODO see https://stackoverflow.com/a/43564630/1200764 - this scaling is arbitrary; reduces the max width from 4160 to 240, so always get 320x240
+                    //mImageReader = ImageReader.newInstance( largest_camera_image_for_format.getHeight(), largest_camera_image_for_format.getWidth(), ImageFormat.YUV_420_888, 2 /*maxImages*/ ); // TODO see https://stackoverflow.com/a/43564630/1200764 - this scaling is arbitrary; reduces the max width from 4160 to 240, so always get 320x240
+                    mImageReader = ImageReader.newInstance( imageReaderSize.getHeight(), imageReaderSize.getWidth(), ImageFormat.YUV_420_888, 2 /*maxImages*/ ); // TODO see https://stackoverflow.com/a/43564630/1200764 - this scaling is arbitrary; reduces the max width from 4160 to 240, so always get 320x240
                 }
 
                 /* TODO - this configures the image processing as a callback that is called whenever a frame is available
@@ -743,12 +847,20 @@ public class Camera2BasicFragment extends Fragment
             StreamConfigurationMap map = manager.getCameraCharacteristics(camera).get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP);
             if(null != map) {
                 fpsRange = map.getHighSpeedVideoFpsRanges(); // this range intends available fps range of device's camera.
-                Log.i(TAG, "logCameraCharacteristics: camera=" + camera + " StreamConfigurationMap getHighSpeedVideoFpsRanges fpsRange=" + fpsRange.toString());
+                Log.i(TAG, "logCameraCharacteristics: camera=" + camera + " StreamConfigurationMap getHighSpeedVideoFpsRanges fpsRange=" + arrayOfRangesToString(fpsRange) );
                 try {   Log.i(TAG, "logCameraCharacteristics: camera="+camera+" StreamConfigurationMap getHighSpeedVideoFpsRanges fpsRange= [" + fpsRange[0] + "," + fpsRange[1] + "]"); }
                 catch(Exception e) {Log.i(TAG, "logCameraCharacteristics: camera="+camera+" StreamConfigurationMap getHighSpeedVideoFpsRanges : exception getting fpsRange="+e);}
             }
         }
             Log.i(TAG,"logCameraCharacteristics: end");
+    }
+
+    String arrayOfRangesToString(Range[] arrayOfRanges_) {
+        String returnString = null;
+        for (Range range : arrayOfRanges_) {
+            returnString = (null == returnString ? range.toString() : returnString+range.toString() );
+        }
+        return (null == returnString ? "[No ranges in array]" : returnString );
     }
 
     /**
@@ -916,14 +1028,14 @@ public class Camera2BasicFragment extends Fragment
         switch (change) {
             case DECREASE:
                 fps--;
-                fpsRange = new Range<Integer>(fps,fps);
+                fpsRange = new Range<Integer>(fps,fpsUpper);
                 Log.i("Camera2BasicFragment","adjustFps(): DECREASE: now "+fpsRange);
                 unlockFocusAndReturnToPreview();
                 Log.i("Camera2BasicFragment","adjustFps(): DECREASE: after unlockFocusAndReturnToPreview.");
                 break;
             case INCREASE:
                 fps++;
-                fpsRange = new Range<Integer>(fps,fps);
+                fpsRange = new Range<Integer>(fps,fpsUpper);
                 Log.i("Camera2BasicFragment","adjustFps(): INCREASE: now "+fpsRange);
                 unlockFocusAndReturnToPreview();
                 Log.i("Camera2BasicFragment","adjustFps(): INCREASE: after unlockFocusAndReturnToPreview.");
@@ -1147,11 +1259,14 @@ public class Camera2BasicFragment extends Fragment
                 Log.i("ImageSaver","ImageSaver(Image image)");
             long startTime = Calendar.getInstance().getTimeInMillis();
                 Log.i("ImageSaver","ImageSaver(Image image): start = "+startTime);
+            Log.i("ImageSaver","ImageSaver(Image image): before image.getPlanes()[0].getBuffer() :timeElapsed:  "+timeElapsed(startTime)+"ms");
             ByteBuffer luminanceBuffer = /*mImage*/image.getPlanes()[0].getBuffer();
-                Log.i("ImageSaver","ImageSaver(Image image): after image.getPlanes()[0].getBuffer() in "+timeElapsed(startTime)+"ms");
+                Log.i("ImageSaver","ImageSaver(Image image): after image.getPlanes()[0].getBuffer() :timeElapsed:  "+timeElapsed(startTime)+"ms");
             /*byte[]*/ luminanceBytes = new byte[luminanceBuffer.remaining()];  // buffer size: current position is zero, remaining() gives "the number of elements between the current position and the limit"
-                Log.i("ImageSaver","ImageSaver(Image image): after luminanceBytes = new byte[luminanceBuffer.remaining()] in "+timeElapsed(startTime)+"ms");
+                Log.i("ImageSaver","ImageSaver(Image image): after luminanceBytes = new byte[luminanceBuffer.remaining()] :timeElapsed: "+timeElapsed(startTime)+"ms");
+                Log.i("ImageSaver","ImageSaver(Image image): after luminanceBuffer.get(luminanceBytes) :timeElapsed:  "+timeElapsed(startTime)+"ms");
             luminanceBuffer.get(luminanceBytes);                            // copy from buffer to bytes: get() "transfers bytes from this buffer into the given destination array"
+                Log.i("ImageSaver","ImageSaver(Image image): after luminanceBuffer.get(luminanceBytes) :timeElapsed:  "+timeElapsed(startTime)+"ms");
             imageWidth = image.getWidth();
             imageHeight = image.getHeight();
                 Log.i("ImageSaver","ImageSaver(Image image): end after "+timeElapsed(startTime)+"ms");
@@ -1171,12 +1286,14 @@ public class Camera2BasicFragment extends Fragment
                 }
                 // dummy image processing code - https://boofcv.org/index.php?title=Android_support
                 long algorithmStepStartTime = Calendar.getInstance().getTimeInMillis();
+                    Log.i("ImageSaver","run() : before new GrayF32(imageWidth,imageHeight) :timeElapsed: "+timeElapsed(algorithmStepStartTime)+"ms");
                 GrayF32 grayImage = new GrayF32(imageWidth,imageHeight);
-                    Log.i("ImageSaver","run() : after constructing grayImage in "+timeElapsed(algorithmStepStartTime)+"ms");
+                    Log.i("ImageSaver","run() : after new GrayF32(imageWidth,imageHeight) :timeElapsed: "+timeElapsed(algorithmStepStartTime)+"ms");
                 // from NV21 to gray scale
                 algorithmStepStartTime = Calendar.getInstance().getTimeInMillis();
+                    Log.i("ImageSaver","run() : before converting nv21ToGray :timeElapsed: "+timeElapsed(algorithmStepStartTime)+"ms");
                 ConvertNV21.nv21ToGray(luminanceBytes,imageWidth,imageHeight, grayImage);
-                    Log.i("ImageSaver","run() : after converting nv21ToGray in "+timeElapsed(algorithmStepStartTime)+"ms");
+                    Log.i("ImageSaver","run() : after converting nv21ToGray :timeElapsed: "+timeElapsed(algorithmStepStartTime)+"ms");
 
                 // start try detecting tags in the frame
                 double BOOFCV_TAG_WIDTH=0.14; // TODO - tag size is a parameter
@@ -1197,11 +1314,13 @@ public class Camera2BasicFragment extends Fragment
 
 
                     Log.i("ImageSaver","run() : config FactoryFiducial.squareBinary");
+                    Log.i("ImageSaver","run() : before creating detector :timeElapsed: "+timeElapsed(algorithmStepStartTime)+"ms");
                 FiducialDetector<GrayF32> detector = FactoryFiducial.squareBinary(
                         new ConfigFiducialBinary(BOOFCV_TAG_WIDTH),
                         ConfigThreshold.local(ThresholdType.LOCAL_SQUARE, 10),          // TODO - evaluate parameter - ?'radius'?
                         GrayF32.class);  // tag size,  type,  ?'radius'?
                 //        detector.setLensDistortion(lensDistortion);
+                    Log.i("ImageSaver","run() : after creating detector :timeElapsed: "+timeElapsed(algorithmStepStartTime)+"ms");
                     Log.i("ImageSaver","run() : config CameraPinhole pinholeModel");
                 CameraPinhole pinholeModel = new CameraPinhole(
                         focal_length_in_pixels_x, focal_length_in_pixels_y,
@@ -1212,21 +1331,22 @@ public class Camera2BasicFragment extends Fragment
                 LensDistortionNarrowFOV pinholeDistort = new LensDistortionPinhole(pinholeModel);
                     Log.i("ImageSaver","run() : config detector.setLensDistortion(pinholeDistort)");
                 detector.setLensDistortion(pinholeDistort);  // TODO - do BoofCV calibration - but assume perfect pinhole camera for now
+                    Log.i("ImageSaver","run() : after detector.setLensDistortion(pinholeDistort) in "+timeElapsed(startTime)+"ms");
 
                 // TODO - timing here  c[camera_num]-f[frameprocessed]
                 long timeNow;
-                    Log.i("ImageSaver","run() : start detector.detect(grayImage);");
                     Log.i("ImageSaver","run() : start detector.detect(grayImage) at "+Calendar.getInstance().getTimeInMillis());
+                Log.i("ImageSaver","run() : before detector.detect(grayImage) :timeElapsed: "+timeElapsed(startTime)+"ms");
                 detector.detect(grayImage);
-                    Log.i("ImageSaver","run() : after detector.detect(grayImage) in "+timeElapsed(startTime)+"ms");
+                    Log.i("ImageSaver","run() : after detector.detect(grayImage) :timeElapsed: "+timeElapsed(startTime)+"ms");
                     Log.i("ImageSaver","run() : finished detector.detect(grayImage);");
                 String logTag = "ImageSaver";
                 for (int i = 0; i < detector.totalFound(); i++) {
                     timeNow = Calendar.getInstance().getTimeInMillis();
                     if( detector.hasUniqueID() ) {
                         long tag_id_long = detector.getId(i);
-                            Log.i(logTag, "run() : tag detection "+i+" after detector.getId("+i+") = "+tag_id_long+" in " + timeElapsed(timeNow) + "ms");
-                            Log.i(logTag, "run() : tag detection "+i+" after detector.getId("+i+") = "+tag_id_long+" in " + timeElapsed(startTime) + "ms");
+                            Log.i(logTag, "run() : tag detection "+i+" after detector.getId("+i+") = "+tag_id_long+" :timeElapsed:timeNow: " + timeElapsed(timeNow) + "ms");
+                            Log.i(logTag, "run() : tag detection "+i+" after detector.getId("+i+") = "+tag_id_long+" :timeElapsed:startTime: " + timeElapsed(startTime) + "ms");
                     } else {
                             Log.i(logTag, "run() : tag detection "+i+" has no id; detector.hasUniqueID() == false ");
                     }
@@ -1348,15 +1468,15 @@ public class Camera2BasicFragment extends Fragment
             instantiationTimeMs = startTime;
             Log.i("ImageSaverAsyncTask","ImageSaverAsyncTask(Image image): start = "+startTime);
             ByteBuffer luminanceBuffer = /*mImage*/image.getPlanes()[0].getBuffer();
-            Log.i("ImageSaverAsyncTask","ImageSaverAsyncTask(Image image): after image.getPlanes()[0].getBuffer() in "+timeElapsed(startTime)+"ms");
+            Log.i("ImageSaverAsyncTask","ImageSaverAsyncTask(Image image): after image.getPlanes()[0].getBuffer() :timeElapsed: "+timeElapsed(startTime)+"ms");
             /*byte[]*/ luminanceBytes = new byte[luminanceBuffer.remaining()];  // buffer size: current position is zero, remaining() gives "the number of elements between the current position and the limit"
-            Log.i("ImageSaverAsyncTask","ImageSaverAsyncTask(Image image): after luminanceBytes = new byte[luminanceBuffer.remaining()] in "+timeElapsed(startTime)+"ms");
+            Log.i("ImageSaverAsyncTask","ImageSaverAsyncTask(Image image): after luminanceBytes = new byte[luminanceBuffer.remaining()] :timeElapsed: "+timeElapsed(startTime)+"ms");
             luminanceBuffer.get(luminanceBytes);                            // copy from buffer to bytes: get() "transfers bytes from this buffer into the given destination array"
             imageWidth = image.getWidth();
             imageHeight = image.getHeight();
             Log.i("ImageSaverAsyncTask","ImageSaverAsyncTask(Image image): image dimensions: "+imageWidth+" pixels wide, "+imageHeight+" pixels high");
             taskCompletionTimer = taskCompletionTimer_;
-            Log.i("ImageSaverAsyncTask","ImageSaverAsyncTask(Image image): end after "+timeElapsed(startTime)+"ms");
+            Log.i("ImageSaverAsyncTask","ImageSaverAsyncTask(Image image): end after :timeElapsed: "+timeElapsed(startTime)+"ms");
         }
 
         @Override
@@ -1384,11 +1504,12 @@ public class Camera2BasicFragment extends Fragment
                     algorithmStepStartTime = Calendar.getInstance().getTimeInMillis();
                     GrayF32 grayImage = fetchAGrayImageToUse(imageWidth, imageHeight); //  new GrayF32(imageWidth, imageHeight);
 
-                        Log.i(logTag, "doInBackground() : after constructing grayImage in " + timeElapsed(algorithmStepStartTime) + "ms");
+                        Log.i(logTag, "doInBackground() : after constructing grayImage :timeElapsed on step: " + timeElapsed(algorithmStepStartTime)  + "ms:  timeElapsed since method start: "+ timeElapsed(procStartTime) + "ms");
                     // from NV21 to gray scale
                     algorithmStepStartTime = Calendar.getInstance().getTimeInMillis();
+                        Log.i(logTag, "doInBackground() : before converting nv21ToGray :timeElapsed on step: " + timeElapsed(algorithmStepStartTime)  + "ms:  timeElapsed since method start: "+ timeElapsed(procStartTime) + "ms");
                     ConvertNV21.nv21ToGray(luminanceBytes, imageWidth, imageHeight, grayImage);
-                        Log.i(logTag, "doInBackground() : after converting nv21ToGray in " + timeElapsed(algorithmStepStartTime) + "ms");
+                        Log.i(logTag, "doInBackground() : after converting nv21ToGray :timeElapsed on step: " + timeElapsed(algorithmStepStartTime) + "ms:  timeElapsed since method start: "+ timeElapsed(procStartTime) + "ms");
 
                     // start try detecting tags in the frame
                     double BOOFCV_TAG_WIDTH = 0.14;
@@ -1427,8 +1548,13 @@ public class Camera2BasicFragment extends Fragment
                     // TODO - timing here  c[camera_num]-f[frameprocessed]
                     long timeNow = Calendar.getInstance().getTimeInMillis();
                         Log.i(logTag, "doInBackground() : start detector.detect(grayImage) at " + timeNow);
-                    detector.detect(grayImage);
-                        Log.i(logTag, "doInBackground() : after detector.detect(grayImage) in " + timeElapsed(timeNow) + "ms: time since start = " + timeElapsed(procStartTime) + "ms");
+                        Log.i(logTag, "doInBackground() : before detector.detect(grayImage) :timeElapsed: " + timeElapsed(timeNow) + "ms: time since start = " + timeElapsed(procStartTime) + "ms");
+                    try { detector.detect(grayImage); } catch (Throwable e) {
+                        Log.e(logTag,"Exception error in detector.detect(grayImage): "+e.getMessage(), e);
+                        e.printStackTrace();
+                        return new Long(0L);
+                    }
+                        Log.i(logTag, "doInBackground() : after detector.detect(grayImage) :timeElapsed: " + timeElapsed(timeNow) + "ms: time since start = " + timeElapsed(procStartTime) + "ms");
                     for (int i = 0; i < detector.totalFound(); i++) {
                         timeNow = Calendar.getInstance().getTimeInMillis();
                         int tag_id = -1;
@@ -1455,7 +1581,7 @@ public class Camera2BasicFragment extends Fragment
 
                         if( detector.hasUniqueID() ) {
                             long tag_id_long = detector.getId(i);
-                                Log.i(logTag, "doInBackground() : tag detection "+i+" after detector.getId("+i+") = "+tag_id_long+" in " + timeElapsed(timeNow) + "ms : in " + timeElapsed(procStartTime) + "ms from start");
+                                Log.i(logTag, "doInBackground() : tag detection "+i+" after detector.getId("+i+") = "+tag_id_long+" :timeElapsed: " + timeElapsed(timeNow) + "ms : :timeElapsed: " + timeElapsed(procStartTime) + "ms from start");
                             // if is for a current task, track it
 
                             // if is for a current task, report it
@@ -1620,36 +1746,99 @@ public class Camera2BasicFragment extends Fragment
 
     }
 
+    /***********************************************************************************************/
     /**
      * Shows OK/Cancel confirmation dialog about camera permission.
      */
-    public static class ConfirmationDialog extends DialogFragment {
+    public static class ConfirmationDialogFragment extends DialogFragment {
 
         @Override
         public Dialog onCreateDialog(Bundle savedInstanceState) {
-            final Fragment parent = getParentFragment();
-            return new AlertDialog.Builder(getActivity())
-                    .setMessage(R.string.request_permission)
-                    .setPositiveButton(android.R.string.ok, new DialogInterface.OnClickListener() {
+            final Fragment parent = getParentFragment();        // ... get the parent fragment of this fragment ...
+            return new AlertDialog.Builder(getActivity())       // ... go to Activity, create an AlertDialog builder ...
+                    .setMessage(R.string.request_permission)    // ... set message to display in the alert ...
+                    .setPositiveButton(android.R.string.ok, new DialogInterface.OnClickListener() { // ... set the 'OK'/'Agree'/'Yes' button callback method
                         @Override
                         public void onClick(DialogInterface dialog, int which) {
-                            FragmentCompat.requestPermissions(parent,
+                            FragmentCompat.requestPermissions(parent,                               // ... to request permissions ... ????
                                     new String[]{Manifest.permission.CAMERA},
                                     REQUEST_CAMERA_PERMISSION);
                         }
                     })
-                    .setNegativeButton(android.R.string.cancel,
+                    .setNegativeButton(android.R.string.cancel,                                     // ... set the 'Cancel'/'No' button callback method ...
                             new DialogInterface.OnClickListener() {
                                 @Override
                                 public void onClick(DialogInterface dialog, int which) {
                                     Activity activity = parent.getActivity();
                                     if (activity != null) {
-                                        activity.finish();
+                                        activity.finish();                                          // ... to quit
                                     }
                                 }
                             })
-                    .create();
+                    .create();                                                                      // ... creates but does not show
         }
     }
 
+
+    private class CalcPreviewSize {
+        private int width;
+        private int height;
+        private Activity activity;
+        private int displayRotation;
+        private Point displaySize;
+        private int rotatedPreviewWidth;
+        private int rotatedPreviewHeight;
+        private int maxPreviewWidth;
+        private int maxPreviewHeight;
+
+        public CalcPreviewSize(int width, int height, Activity activity, int displayRotation, Point displaySize) {
+            this.width = width;
+            this.height = height;
+            this.activity = activity;
+            this.displayRotation = displayRotation;
+            this.displaySize = displaySize;
+        }
+
+        public int getRotatedPreviewWidth() {
+            return rotatedPreviewWidth;
+        }
+
+        public int getRotatedPreviewHeight() {
+            return rotatedPreviewHeight;
+        }
+
+        public int getMaxPreviewWidth() {
+            return maxPreviewWidth;
+        }
+
+        public int getMaxPreviewHeight() {
+            return maxPreviewHeight;
+        }
+
+        public CalcPreviewSize invoke() {
+            activity.getWindowManager().getDefaultDisplay().getSize(displaySize);
+            rotatedPreviewWidth = width;
+            rotatedPreviewHeight = height;
+            maxPreviewWidth = displaySize.x;
+            maxPreviewHeight = displaySize.y;
+            boolean swappedDimensions = false;
+            switch (displayRotation) {
+                case Surface.ROTATION_0: case Surface.ROTATION_180:
+                    if (mSensorOrientation == 90 || mSensorOrientation == 270) { swappedDimensions = true; }
+                    break;
+                case Surface.ROTATION_90: case Surface.ROTATION_270:
+                    if (mSensorOrientation == 0 || mSensorOrientation == 180) { swappedDimensions = true; }
+                    break;
+                default:
+                    Log.e(TAG, "Display rotation is invalid: " + displayRotation);
+            }
+            if (swappedDimensions) {
+                rotatedPreviewWidth = height;         rotatedPreviewHeight = width;
+                maxPreviewWidth     = displaySize.y;  maxPreviewHeight     = displaySize.x;
+            }
+            if (maxPreviewWidth > MAX_PREVIEW_WIDTH) { maxPreviewWidth = MAX_PREVIEW_WIDTH; }
+            if (maxPreviewHeight > MAX_PREVIEW_HEIGHT) { maxPreviewHeight = MAX_PREVIEW_HEIGHT; }
+            return this;
+        }
+    }
 }
