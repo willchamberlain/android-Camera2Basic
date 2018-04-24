@@ -1,5 +1,6 @@
 package com.example.android.camera2basic;
 
+import android.graphics.Bitmap;
 import android.media.Image;
 import android.os.AsyncTask;
 import android.util.Log;
@@ -37,6 +38,13 @@ class ImageSaverAsyncTask extends AsyncTask<Void, Void, Long> { //parameter arra
 
     public ImageSaverAsyncTask(Camera2BasicFragment camera2BasicFragment, Image image) {  //, Camera2BasicFragment.TaskCompletionTimer taskCompletionTimer_) {
         super();
+
+            Log.i("ImageSaverAsyncTask","before ImageToOpenCVConverter.convertYuv420ToBitmap(image)");
+            Bitmap bitmap = ImageToOpenCVConverter.convertYuv420ToBitmap(image);
+            Log.i("ImageSaverAsyncTask","after ImageToOpenCVConverter.convertYuv420ToBitmap(image)");
+            Log.i("ImageSaverAsyncTask","bitmap.getWidth() = "+bitmap.getWidth());
+            Log.i("ImageSaverAsyncTask","bitmap.getHeight() = "+bitmap.getHeight());
+
         this.camera2BasicFragment = camera2BasicFragment;
         Log.i("ImageSaverAsyncTask","ImageSaverAsyncTask(Image image)");
         long startTime = Calendar.getInstance().getTimeInMillis();
@@ -77,6 +85,7 @@ class ImageSaverAsyncTask extends AsyncTask<Void, Void, Long> { //parameter arra
                 // dummy image processing code - https://boofcv.org/index.php?title=Android_support
                 long algorithmStepStartTime = 0L;
                 algorithmStepStartTime = Calendar.getInstance().getTimeInMillis();
+
                 GrayF32 grayImage = camera2BasicFragment.fetchAGrayImageToUse(imageWidth, imageHeight); //  new GrayF32(imageWidth, imageHeight);
 
                     Log.i(logTag, "doInBackground() : after constructing grayImage :timeElapsed on step: " + AppMonitor.timeElapsed(algorithmStepStartTime)  + "ms:  timeElapsed since method start: "+ AppMonitor.timeElapsed(procStartTime) + "ms");
@@ -165,7 +174,11 @@ class ImageSaverAsyncTask extends AsyncTask<Void, Void, Long> { //parameter arra
                         continue;
                     }
                 }
+            } catch (RuntimeException e) {
+                Log.e(logTag, "doInBackground() : RuntimeException "+e, e);
+                e.printStackTrace();
             } catch (IOException e) {
+                Log.e(logTag, "doInBackground() : IOException "+e, e);
                 e.printStackTrace();
             } finally {
                 long timeNow = Calendar.getInstance().getTimeInMillis();
