@@ -3,6 +3,7 @@ package com.example.android.camera2basic;
 import android.graphics.Bitmap;
 import android.graphics.ImageFormat;
 import android.media.Image;
+import android.os.SystemClock;
 import android.support.annotation.NonNull;
 
 import org.opencv.android.Utils;
@@ -11,6 +12,9 @@ import org.opencv.core.Mat;
 import org.opencv.imgproc.Imgproc;
 
 import java.nio.ByteBuffer;
+
+import chamberlain.will.datetime.DateTime;
+import chamberlain.will.monitor.ThreadPerformance;
 
 /**
  * Created by will on 25/04/18.
@@ -40,8 +44,12 @@ public class ImageToOpenCVConverter {
         return rgbMat;
     }
 
+    private static ThreadPerformance threadPerformance = new ThreadPerformance();
+
     @NonNull
     public static Mat convertYuv420ToYuvMat(Image image) {
+        DateTime.TimeAndThreadTimeMillis tic = threadPerformance.tic();
+
         Image.Plane[] planes = image.getPlanes();
 
         byte[] imageData = new byte[image.getWidth() * image.getHeight() * ImageFormat.getBitsPerPixel(ImageFormat.YUV_420_888) / 8];
@@ -63,6 +71,14 @@ public class ImageToOpenCVConverter {
 
         Mat yuvMat = new Mat(image.getHeight() + image.getHeight() / 2, image.getWidth(), CvType.CV_8UC1);
         yuvMat.put(0, 0, imageData);
+
+        System.out.println("ImageToOpenCVConverter: convertYuv420ToYuvMat: " + threadPerformance.tocLogString(tic));
+
         return yuvMat;
+    }
+
+    @NonNull
+    private static String getString(DateTime.TimeAndThreadTimeMillis timeDiffMillis) {
+        return "time elapsed=" + timeDiffMillis.timeMillis + "ms : thread time elapsed=" + timeDiffMillis.threadTimeMillis + "ms";
     }
 }

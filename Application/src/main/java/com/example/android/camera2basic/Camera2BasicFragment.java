@@ -478,6 +478,12 @@ public class Camera2BasicFragment extends Fragment
                                        @NonNull CaptureRequest request,
                                        @NonNull TotalCaptureResult result) {
             process(result);
+            try {
+                float focusDistance = result.get(CaptureResult.LENS_FOCUS_DISTANCE);
+                Log.i(TAG, "mCaptureCallback: result.get(CaptureResult.LENS_FOCUS_DISTANCE)="+focusDistance);
+            } catch (Throwable t) {
+                Log.e(TAG, "mCaptureCallback: exception getting LENS_FOCUS_DISTANCE from capture result: "+t.getMessage(),t);
+            }
         }
 
     };
@@ -915,6 +921,9 @@ public class Camera2BasicFragment extends Fragment
         }
     }
 
+    float minFocalDist = 0.0f;
+    boolean hasFoundMinFocalDistance = false;
+
     /**
      * TODO see https://stackoverflow.com/a/43564630/1200764
      * Creates a new {@link CameraCaptureSession} for camera preview.
@@ -950,9 +959,30 @@ public class Camera2BasicFragment extends Fragment
                             // When the session is ready, we start displaying the preview.
                             mCaptureSession = cameraCaptureSession;
                             try {
-                                mPreviewRequestBuilder.set( // Auto focus should be continuous for camera preview.
-                                        CaptureRequest.CONTROL_AF_MODE,
-                                        CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE);
+
+                                if (!hasFoundMinFocalDistance) {
+                                    Activity activity = getActivity();
+                                    CameraManager manager = (CameraManager) activity.getSystemService(Context.CAMERA_SERVICE);
+                                    CameraCharacteristics cameraCharacteristics = manager.getCameraCharacteristics(mCameraDevice.getId());
+                                    minFocalDist = cameraCharacteristics.get(CameraCharacteristics.LENS_INFO_MINIMUM_FOCUS_DISTANCE);
+                                    Log.i(TAG,"onConfigured: found minFocalDist = "+minFocalDist);
+                                    hasFoundMinFocalDistance = true;
+                                }
+                                if (!hasFoundMinFocalDistance) {
+                                    mPreviewRequestBuilder.set( // Auto focus should be continuous for camera preview.
+                                            CaptureRequest.CONTROL_AF_MODE,
+                                            CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE);
+                                    Log.i(TAG,"onConfigured: minFocalDist not known, using CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE.");
+                                } else {
+                                    mPreviewRequestBuilder.set(
+                                            CaptureRequest.CONTROL_AF_MODE,
+                                            CaptureRequest.CONTROL_AF_MODE_OFF);
+                                    mPreviewRequestBuilder.set(
+                                            CaptureRequest.LENS_FOCUS_DISTANCE,
+                                            minFocalDist);
+                                    Log.i(TAG,"onConfigured: minFocalDist known, using minFocalDist = "+minFocalDist);
+                                }
+
 
                                 setAutoexposureToTargetRangeOfFPS(fpsRange);
                                 setAutoFlash(mPreviewRequestBuilder); // Flash is automatically enabled when necessary.
