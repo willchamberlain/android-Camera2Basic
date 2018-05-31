@@ -43,7 +43,6 @@ import android.hardware.camera2.TotalCaptureResult;
 import android.hardware.camera2.params.StreamConfigurationMap;
 import android.media.Image;
 import android.media.ImageReader;
-import android.os.AsyncTask;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.HandlerThread;
@@ -51,7 +50,6 @@ import android.os.Process;
 import android.support.annotation.NonNull;
 import android.support.v13.app.FragmentCompat;
 import android.support.v4.content.ContextCompat;
-import android.text.format.DateUtils;
 import android.util.Log;
 import android.util.Range;
 import android.util.Size;
@@ -64,11 +62,8 @@ import android.view.ViewGroup;
 import android.widget.Toast;
 
 import java.io.File;
-import java.io.IOException;
-import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.Calendar;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.Date;
@@ -76,7 +71,6 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.NoSuchElementException;
-import java.util.Random;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.LinkedBlockingQueue;
@@ -86,21 +80,12 @@ import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
-import boofcv.abst.fiducial.FiducialDetector;
-import boofcv.alg.distort.LensDistortionNarrowFOV;
-import boofcv.alg.distort.pinhole.LensDistortionPinhole;
-import boofcv.core.encoding.ConvertNV21;
-import boofcv.factory.fiducial.ConfigFiducialBinary;
-import boofcv.factory.fiducial.FactoryFiducial;
-import boofcv.factory.filter.binary.ConfigThreshold;
-import boofcv.factory.filter.binary.ThresholdType;
-import boofcv.struct.calib.CameraPinhole;
 import boofcv.struct.image.GrayF32;
 
 import static com.example.android.camera2basic.OpenCVStub.demoOpenCV;
 
 
-public class Camera2BasicFragment extends Fragment
+public class Camera2OpenCVFragment extends Fragment
         implements View.OnClickListener, FragmentCompat.OnRequestPermissionsResultCallback {
 
     // This snippet hides the system bars.
@@ -152,7 +137,7 @@ public class Camera2BasicFragment extends Fragment
     /**
      * Tag for the {@link Log}.
      */
-    private static final String TAG = "Camera2BasicFragment";
+    private static final String TAG = "Camera2OpenCVFragment";
 
     /**
      * Camera state: Showing camera preview.
@@ -238,7 +223,7 @@ public class Camera2BasicFragment extends Fragment
     private CameraDevice mCameraDevice;
 
     /**
-     * The {@link android.util.Size} of camera preview.
+     * The {@link Size} of camera preview.
      */
     private Size imageSize;
     private Size imageReaderSize;
@@ -317,8 +302,8 @@ public class Camera2BasicFragment extends Fragment
 
         @Override
         public void onImageAvailable(ImageReader reader) {
-            //Image image =  reader.acquireNextImage();       // TODO see https://stackoverflow.com/a/43564630/1200764
-            Image image =  reader.acquireLatestImage();       // TODO see https://stackoverflow.com/a/43564630/1200764
+            Image image =  reader.acquireNextImage();       // TODO see https://stackoverflow.com/a/43564630/1200764
+            //Image image =  reader.acquireLatestImage();       // TODO see https://stackoverflow.com/a/43564630/1200764
             if (null == image) {
                 Log.w("onImageAvailable","null == image : frameNum="+frameNum);
                 return;
@@ -347,12 +332,12 @@ public class Camera2BasicFragment extends Fragment
                     if (skipFrame(image)) break;
                     try {
                         //  new ImageSaverAsyncTask(image, taskCompletionTimer).executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR);  // https://stackoverflow.com/questions/18266161/achieving-concurrency-using-asynctask  https://developer.android.com/reference/java/util/concurrent/Executor.html
-                        new ImageSaverAsyncTask(Camera2BasicFragment.this, image/*, taskCompletionTimer*/).executeOnExecutor(threadPoolExecutor);  // https://stackoverflow.com/questions/18266161/achieving-concurrency-using-asynctask  https://developer.android.com/reference/java/util/concurrent/Executor.html
+                        new ImageSaverAsyncTask(Camera2OpenCVFragment.this, image/*, taskCompletionTimer*/).executeOnExecutor(threadPoolExecutor);  // https://stackoverflow.com/questions/18266161/achieving-concurrency-using-asynctask  https://developer.android.com/reference/java/util/concurrent/Executor.html
                         if (image != null) {             // ?? causes an exception because !when the app starts! closed before can save                // TODO see https://stackoverflow.com/a/43564630/1200764
                             image.close();               // ?? causes an exception because !when the app starts! closed before can save                // TODO see https://stackoverflow.com/a/43564630/1200764
                         }
                     } catch (java.util.concurrent.RejectedExecutionException ree) {
-                        Log.w("Camera2BasicFragment","onImageAvailable(ImageReader reader): hit the limit of available threads with a java.util.concurrent.RejectedExecutionException");
+                        Log.w("Camera2OpenCVFragment","onImageAvailable(ImageReader reader): hit the limit of available threads with a java.util.concurrent.RejectedExecutionException");
                         skipRateOnException();
                         if (image != null) {             // ?? causes an exception because !when the app starts! closed before can save                // TODO see https://stackoverflow.com/a/43564630/1200764
                             image.close();               // ?? causes an exception because !when the app starts! closed before can save                // TODO see https://stackoverflow.com/a/43564630/1200764
@@ -367,7 +352,7 @@ public class Camera2BasicFragment extends Fragment
                     if (image != null) {             // ?? causes an exception because !when the app starts! closed before can save                // TODO see https://stackoverflow.com/a/43564630/1200764
                         image.close();               // ?? causes an exception because !when the app starts! closed before can save                // TODO see https://stackoverflow.com/a/43564630/1200764
                     } } catch(Exception e) {
-                    Log.e("Camera2BasicFragment","error closing image in final try-catch block.");
+                    Log.e("Camera2OpenCVFragment","error closing image in final try-catch block.");
                 }
             }
         }
@@ -381,7 +366,7 @@ public class Camera2BasicFragment extends Fragment
 
     private boolean skipFrame(Image image) {
         if (skipRate <= 10 && skipRate>0 && frameNum%skipRate == 0 ) { // skip this image - e.g. if skipRate == 8 and frameNum == 16
-            Log.i("Camera2BasicFragment","skipping frame "+frameNum+" on skipRate "+skipRate);
+            Log.i("Camera2OpenCVFragment","skipping frame "+frameNum+" on skipRate "+skipRate);
             if (image != null) {             // ?? causes an exception because !when the app starts! closed before can save                // TODO see https://stackoverflow.com/a/43564630/1200764
                 image.close();               // ?? causes an exception because !when the app starts! closed before can save                // TODO see https://stackoverflow.com/a/43564630/1200764
             }
@@ -391,7 +376,7 @@ public class Camera2BasicFragment extends Fragment
         if ( skipRateReducedOnFrameNum < frameNum - 100 && skipRate > 2 && taskCompletionTimer.overlapWithLastInitiation() > (5000/TARGET_FRAME_RATE)) { // more than 1s overlap; going wrong
             skipRate--; if(skipRate < 2){ skipRate = 2; }
             skipRateReducedOnFrameNum = frameNum;
-            Log.i("Camera2BasicFragment","at frame "+frameNum+" reduced skipRate to "+skipRate+" on taskCompletionTimer.overlapWithLastInitiation() = "+taskCompletionTimer.overlapWithLastInitiation()+" > (5000/"+TARGET_FRAME_RATE+")");
+            Log.i("Camera2OpenCVFragment","at frame "+frameNum+" reduced skipRate to "+skipRate+" on taskCompletionTimer.overlapWithLastInitiation() = "+taskCompletionTimer.overlapWithLastInitiation()+" > (5000/"+TARGET_FRAME_RATE+")");
         }
         return false;
     }
@@ -605,9 +590,9 @@ public class Camera2BasicFragment extends Fragment
         }
     }
 
-    public static Camera2BasicFragment newInstance() {
-        Log.i("Camera2BasicFragment","newInstance(): start");
-        return new Camera2BasicFragment();
+    public static Camera2OpenCVFragment newInstance() {
+        Log.i("Camera2OpenCVFragment","newInstance(): start");
+        return new Camera2OpenCVFragment();
     }
 
     @Override
@@ -639,7 +624,7 @@ public class Camera2BasicFragment extends Fragment
     public void onResume() {
         super.onResume();
 
-        Log.i("Camera2BasicFragment","onResume(): start");
+        Log.i("Camera2OpenCVFragment","onResume(): start");
 
 
         startBackgroundThread();
@@ -663,7 +648,7 @@ public class Camera2BasicFragment extends Fragment
 
     @Override
     public void onPause() {
-        Log.i("Camera2BasicFragment","onPause(): start");
+        Log.i("Camera2OpenCVFragment","onPause(): start");
         closeCamera();
         stopBackgroundThread();
         super.onPause();
@@ -849,7 +834,7 @@ public class Camera2BasicFragment extends Fragment
     }
 
     /**
-     * Opens the camera specified by {@link Camera2BasicFragment#cameraId}.
+     * Opens the camera specified by {@link Camera2OpenCVFragment#cameraId}.
      */
     private void openCamera(int width, int height) {
         if (ContextCompat.checkSelfPermission(getActivity(), Manifest.permission.CAMERA)
@@ -975,7 +960,7 @@ public class Camera2BasicFragment extends Fragment
      * Creates a new {@link CameraCaptureSession} for camera preview.
      */
     private void createCameraPreviewSession() {
-            Log.i("Camera2BasicFragment","createCameraPreviewSession(): start");
+            Log.i("Camera2OpenCVFragment","createCameraPreviewSession(): start");
         try {
             SurfaceTexture previewTexture = mTextureView.getSurfaceTexture(); //preview View: the View in the XML-declarative layout
             assert previewTexture != null;
@@ -983,17 +968,18 @@ public class Camera2BasicFragment extends Fragment
             // We configure the size of default buffer to be the size of camera preview we want.
             previewTexture.setDefaultBufferSize(imageSize.getWidth(), imageSize.getHeight());
 
-            // This is the output Surface we need to start preview.
-            Surface previewDisplaySurface = new Surface(previewTexture);
+////             This is the output Surface we need to start preview.
+//            Surface previewDisplaySurface = new Surface(previewTexture);
 
             // We set up a CaptureRequest.Builder with the output Surface.
-            Log.i("Camera2BasicFragment","createCameraPreviewSession(): for mCameraDevice.getId()="+mCameraDevice.getId());
+            Log.i("Camera2OpenCVFragment","createCameraPreviewSession(): for mCameraDevice.getId()="+mCameraDevice.getId());
             mPreviewRequestBuilder = mCameraDevice.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW);
-            mPreviewRequestBuilder.addTarget(previewDisplaySurface);
+//            mPreviewRequestBuilder.addTarget(previewDisplaySurface);
             mPreviewRequestBuilder.addTarget(mImageReader.getSurface());            // TODO see https://stackoverflow.com/a/43564630/1200764
 
             // Here, we create a CameraCaptureSession for camera preview.
-            mCameraDevice.createCaptureSession(Arrays.asList(previewDisplaySurface, mImageReader.getSurface()),
+            mCameraDevice.createCaptureSession(Arrays.asList(mImageReader.getSurface()),
+//            mCameraDevice.createCaptureSession(Arrays.asList(previewDisplaySurface, mImageReader.getSurface()),
                     new CameraCaptureSession.StateCallback() {
 
                         @Override
@@ -1005,30 +991,28 @@ public class Camera2BasicFragment extends Fragment
                             // When the session is ready, we start displaying the preview.
                             mCaptureSession = cameraCaptureSession;
                             try {
-
-                                if (!hasFoundMinFocalDistance) {
-                                    Activity activity = getActivity();
-                                    CameraManager manager = (CameraManager) activity.getSystemService(Context.CAMERA_SERVICE);
-                                    CameraCharacteristics cameraCharacteristics = manager.getCameraCharacteristics(mCameraDevice.getId());
-                                    minFocalDist = cameraCharacteristics.get(CameraCharacteristics.LENS_INFO_MINIMUM_FOCUS_DISTANCE);
-                                    Log.i(TAG,"onConfigured: found minFocalDist = "+minFocalDist);
-                                    hasFoundMinFocalDistance = true;
-                                }
-                                if (!hasFoundMinFocalDistance) {
-                                    mPreviewRequestBuilder.set( // Auto focus should be continuous for camera preview.
-                                            CaptureRequest.CONTROL_AF_MODE,
-                                            CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE);
-                                    Log.i(TAG,"onConfigured: minFocalDist not known, using CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE.");
+                                if(!manuallyControlFocalDistance) {
+                                    // Auto focus should be continuous for camera preview.
+                                    mPreviewRequestBuilder.set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE);
+                                        Log.i(TAG,"onConfigured: using CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE.");
                                 } else {
-                                    mPreviewRequestBuilder.set(
-                                            CaptureRequest.CONTROL_AF_MODE,
-                                            CaptureRequest.CONTROL_AF_MODE_OFF);
-                                    mPreviewRequestBuilder.set(
-                                            CaptureRequest.LENS_FOCUS_DISTANCE,
-                                            minFocalDist);
-                                    Log.i(TAG,"onConfigured: minFocalDist known, using minFocalDist = "+minFocalDist);
+                                    if (!hasFoundMinFocalDistance) {
+                                        Activity activity = getActivity();
+                                        CameraManager manager = (CameraManager) activity.getSystemService(Context.CAMERA_SERVICE);
+                                        CameraCharacteristics cameraCharacteristics = manager.getCameraCharacteristics(mCameraDevice.getId());
+                                        minFocalDist = cameraCharacteristics.get(CameraCharacteristics.LENS_INFO_MINIMUM_FOCUS_DISTANCE);
+                                            Log.i(TAG, "onConfigured: manuallyControlFocalDistance: found minFocalDist = " + minFocalDist);
+                                        hasFoundMinFocalDistance = true;
+                                    }
+                                    if (!hasFoundMinFocalDistance) {
+                                        mPreviewRequestBuilder.set( CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE);
+                                            Log.i(TAG, "onConfigured: manuallyControlFocalDistance: minFocalDist not known, using CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE.");
+                                    } else {
+                                        mPreviewRequestBuilder.set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_OFF);
+                                        mPreviewRequestBuilder.set(CaptureRequest.LENS_FOCUS_DISTANCE, minFocalDist);
+                                            Log.i(TAG, "onConfigured: manuallyControlFocalDistance: minFocalDist known, using minFocalDist = " + minFocalDist);
+                                    }
                                 }
-
 
                                 setAutoexposureToTargetRangeOfFPS(fpsRange);
                                 setAutoFlash(mPreviewRequestBuilder); // Flash is automatically enabled when necessary.
@@ -1060,7 +1044,7 @@ public class Camera2BasicFragment extends Fragment
     }
 
     /**
-     * Configures the necessary {@link android.graphics.Matrix} transformation to `mTextureView`.
+     * Configures the necessary {@link Matrix} transformation to `mTextureView`.
      * This method should be called after the camera preview size is determined in
      * setUpCameraOutputs and also the size of `mTextureView` is fixed.
      *
@@ -1095,7 +1079,7 @@ public class Camera2BasicFragment extends Fragment
 
     private void adjustFps() {
         if (dontHaveEnoughDataYet()) {
-            Log.i("Camera2BasicFragment","adjustFps(): numRecordsToUse < countOfFpsAndThreads.size(): "+numRecordsToUse+" < "+countOfFpsAndThreads.size());
+            Log.i("Camera2OpenCVFragment","adjustFps(): numRecordsToUse < countOfFpsAndThreads.size(): "+numRecordsToUse+" < "+countOfFpsAndThreads.size());
             return;
         }
         FPS.Change change = calculateFPSChangeAndClear();
@@ -1103,22 +1087,22 @@ public class Camera2BasicFragment extends Fragment
             case DECREASE:
                 fps--;
                 fpsRange = new Range<Integer>(fps,fpsUpper);
-                Log.i("Camera2BasicFragment","adjustFps(): DECREASE: now "+fpsRange);
+                Log.i("Camera2OpenCVFragment","adjustFps(): DECREASE: now "+fpsRange);
                 unlockFocusAndReturnToPreview();
-                Log.i("Camera2BasicFragment","adjustFps(): DECREASE: after unlockFocusAndReturnToPreview.");
+                Log.i("Camera2OpenCVFragment","adjustFps(): DECREASE: after unlockFocusAndReturnToPreview.");
                 break;
             case INCREASE:
                 fps++;
                 fpsRange = new Range<Integer>(fps,fpsUpper);
-                Log.i("Camera2BasicFragment","adjustFps(): INCREASE: now "+fpsRange);
+                Log.i("Camera2OpenCVFragment","adjustFps(): INCREASE: now "+fpsRange);
                 unlockFocusAndReturnToPreview();
-                Log.i("Camera2BasicFragment","adjustFps(): INCREASE: after unlockFocusAndReturnToPreview.");
+                Log.i("Camera2OpenCVFragment","adjustFps(): INCREASE: after unlockFocusAndReturnToPreview.");
                 break;
             case NO_CHANGE:
-                Log.i("Camera2BasicFragment","adjustFps(): NO_CHANGE: still "+fpsRange);
+                Log.i("Camera2OpenCVFragment","adjustFps(): NO_CHANGE: still "+fpsRange);
                 break;
             default:
-                Log.i("Camera2BasicFragment","adjustFps(): don't know what this value is : "+change.name());
+                Log.i("Camera2OpenCVFragment","adjustFps(): don't know what this value is : "+change.name());
                 break;
         }
     }
@@ -1144,7 +1128,7 @@ public class Camera2BasicFragment extends Fragment
      * Initiate a still image capture.
      */
     private void takePicture() {
-        Log.i("Camera2BasicFragment","takePicture()");
+        Log.i("Camera2OpenCVFragment","takePicture()");
         lockFocusAndCaptureImage();
     }
 
@@ -1173,7 +1157,7 @@ public class Camera2BasicFragment extends Fragment
      * we get a response in {@link #mCaptureCallback} from {@link #lockFocusAndCaptureImage()}.
      */
     private void runPrecaptureSequenceAndCaptureImage() {
-        Log.i("Camera2BasicFragment","runPrecaptureSequenceAndCaptureImage()");
+        Log.i("Camera2OpenCVFragment","runPrecaptureSequenceAndCaptureImage()");
         try {
             // This is how to tell the camera to trigger.
             mPreviewRequestBuilder.set(
@@ -1277,7 +1261,7 @@ public class Camera2BasicFragment extends Fragment
     }
 
     private void setAutoexposureToTargetRangeOfFPS(Range<Integer> rangeOfFPS) {
-        Log.i("Camera2BasicFragment","setAutoexposureToTargetRangeOfFPS("+rangeOfFPS+")");
+        Log.i("Camera2OpenCVFragment","setAutoexposureToTargetRangeOfFPS("+rangeOfFPS+")");
         mPreviewRequestBuilder.set( // Auto focus should be continuous for camera preview.
                 CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE,
                 rangeOfFPS);
@@ -1291,7 +1275,7 @@ public class Camera2BasicFragment extends Fragment
 
     @Override
     public void onClick(View view) {
-        Log.i("Camera2BasicFragment","onClick(View view)");
+        Log.i("Camera2OpenCVFragment","onClick(View view)");
         switch (view.getId()) {
             case R.id.picture: {
                 takePicture();
@@ -1335,7 +1319,7 @@ public class Camera2BasicFragment extends Fragment
                 @Override
                 public void run() {
                     try {
-                        android.os.Process.setThreadPriority(Process.THREAD_PRIORITY_MORE_FAVORABLE);
+                        Process.setThreadPriority(Process.THREAD_PRIORITY_MORE_FAVORABLE);
                     } catch (Throwable t) {
 
                     }
@@ -1364,7 +1348,7 @@ public class Camera2BasicFragment extends Fragment
     Map<String, PerformanceMetric>countOfFpsAndThreads = Collections.synchronizedMap(new LinkedHashMap<String, PerformanceMetric>()  // convenient for the fixed-size
     {
         @Override
-        protected boolean removeEldestEntry(Map.Entry<String, PerformanceMetric> eldest) {
+        protected boolean removeEldestEntry(Entry<String, PerformanceMetric> eldest) {
             return this.size() > 50;
         }
     });
@@ -1373,7 +1357,7 @@ public class Camera2BasicFragment extends Fragment
     Map<String, PerformanceMetric>logOfFpsAndThreads = Collections.synchronizedMap(new LinkedHashMap<String, PerformanceMetric>()  // convenient for the fixed-size
     {
         @Override
-        protected boolean removeEldestEntry(Map.Entry<String, PerformanceMetric> eldest) {
+        protected boolean removeEldestEntry(Entry<String, PerformanceMetric> eldest) {
             return this.size() > 200;
         }
     });
